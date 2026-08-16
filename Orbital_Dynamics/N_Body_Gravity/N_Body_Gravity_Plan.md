@@ -224,6 +224,124 @@ Final run: `1.4%` energy drift, `0.41%` L drift over `4000` steps -- both
 consistent with the solver's known approximation level, not evidence of a
 bug.
 
+## Performance optimization round 2 — fast tree construction + adaptive FMM
+
+Motivated by wanting an actual dramatic gravitational-collapse demo
+(`Galaxy_Collapse.ipynb`'s `f=0.7` rotational support was chosen
+specifically to *avoid* violent collapse — see Phase 4 — so a real cold-
+or slow-rotation collapse needed new notebooks, and collapse means
+clustering, which is exactly where the existing solvers were weakest per
+the "Rescaling" note above).
+
+**Barnes-Hut walk parallelization (negative result).** Tried adding numba
+`parallel=True`/`prange` to `_bh_walk`'s per-particle loop (moving its
+scratch stack array inside the loop first — sharing one array across
+`prange` iterations is a data race). Verified correct (theta=0 matches
+pairwise to `2e-14`, run-to-run identical) but gave **no real speedup**
+(866ms to 789-897ms across 1-16 threads at N=32000) — root cause is that
+the tree walk is memory-bandwidth-bound (irregular, pointer-chasing node
+access), not compute-bound, so more threads don't help. Kept anyway
+since it's correct and harmless; reported as an honest negative result
+rather than reverted, matching this project's practice of documenting
+what didn't work.
+
+**Adaptive FMM.** `fmm_accel`'s uniform grid is fragile under clustering
+(see the "Rescaling" note above); an FMM built on an adaptive
+(Barnes-Hut-style) tree instead should combine FMM's better scaling with
+Barnes-Hut's adaptivity. Implemented via **dual-tree traversal**: recurse
+over *pairs* of nodes from the same adaptive tree (one target, one
+source, both starting at the root), splitting whichever side is coarser,
+until a pair is either well-separated (M2L into the coarser side's local
+expansion, monopole+quadrupole) or both leaves (near-field pair, direct
+softened summation). `_l2l` then pushes each node's accumulated local
+expansion down to its children by a single increasing-node-index sweep —
+valid without explicit recursion/BFS because child ids are always larger
+than their parent's, an invariant of the tree-construction order.
+
+Three real bugs found and fixed during validation (isolated via
+theta=0 brute-force comparison, worst-node/worst-particle tracing, and
+partitioning brute-force sums the same way the algorithm does):
+- **Near-field double-counting**: splitting a self-pair's children makes
+  the traversal visit both `(A,B)` and `(B,A)` — correct for M2L
+  (different moments each direction) but wrong for near-field pairs
+  (symmetric); fixed by only recording a pair when the smaller particle
+  index comes first.
+- **Catastrophic numerical blowup at sub-softening separations**: the
+  opening-angle MAC is scale-invariant, so for a pathologically clustered
+  synthetic test (radii `~u^3`) the tree recursed to `dist^2 ~ 7.7e-18`
+  between two leaves, where the unsoftened multipole field's `1/r^7`,
+  `1/r^9` terms blew up to `~1e14`. Fixed with an absolute `min_sep2`
+  (tied to `(10*softening)^2`) requirement on the MAC: pairs closer than
+  this fall through to the (properly softened) near-field path instead.
+  A first attempt raising the tree's depth floor (`min_half`) to the
+  softening scale was the *wrong* lever — it forced whole dense but
+  perfectly resolvable regions into one degenerate leaf (up to 288
+  particles sharing one approximate far-field value), a worse
+  approximation than the fragility it was meant to fix (max error
+  428% vs. 2-12%). Reverted; `min_sep2` alone was correct.
+- **Degenerate-leaf particle indexing**: when the tree hits its depth
+  floor with multiple still-unseparated particles, there's no single
+  particle index for that leaf; indexing near-field pairs with the
+  placeholder `-1` silently wrapped to the *last* particle in the array.
+  Fixed by treating a degenerate leaf's whole group as an aggregate point
+  mass for outside interactions (forced M2L regardless of MAC) plus a
+  small internal brute-force sum.
+
+Validated (uniform random, N=50-5000): mean relative error `6.7e-4` to
+`3.2e-3` vs. direct summation, consistent with quadrupole-truncation
+expectations — tighter than Barnes-Hut's `~1.6e-2` at the same `theta`.
+Stress-tested on the pathological clustered (`r~u^3`) distribution at
+N=5000: mean `5.0e-3`, 99th percentile `3.0e-2`, max `2.3e-1`. That one
+outlier (1 particle of 5000) was traced to **catastrophic cancellation**,
+not a bug: its far-field contribution (true `-2.4715` vs. FMM `-2.4502`,
+only 0.86% relative error) nearly cancels against an exact near-field
+term (`+2.4688`) to a tiny net force (`-0.0027`), so a small far-field
+error dominates the tiny residual — the same statistical pattern already
+documented for Barnes-Hut and uniform-grid FMM (mean error much smaller
+than worst-case individual-particle error).
+
+**Fast tree construction.** Adaptive FMM was initially *slower* than
+Barnes-Hut (203-270ms vs. 124ms at N=5000) despite being the better
+algorithm — profiling found tree construction was 77-93% of total time,
+and this was never specific to adaptive FMM: `build_flat_quadtree`'s own
+plain-Python-recursive construction was ~84ms of Barnes-Hut's ~120ms at
+N=5000, previously invisible because it used to be dwarfed by the
+(pre-numba) walk. Root cause was numpy fancy-indexing (`indices[mask]`),
+which allocates a new array at every one of the ~3N tree nodes visited.
+Rewrote construction as `_build_tree_numba`: numba-jitted, non-recursive
+(explicit stack), in-place counting-sort partitioning of a single shared
+particle-order array (like quicksort's partition step) instead of
+`indices[mask]`, with mass/COM/quadrupole computed bottom-up in the same
+single pass via a decreasing-node-index sweep (children always get
+larger ids than their parent, so by the time a node's turn comes up in
+that sweep every child it needs is already finalized). Verified identical
+tree structure/moments to the old builder and bit-identical accelerations
+through the existing (unchanged) `_bh_walk`. **40-60x faster** (N=5000:
+124.2ms to 2.12ms) — used by both `build_flat_quadtree` (Barnes-Hut) and
+`adaptive_fmm_accel`. Also fixed a related pre-existing bug found along
+the way: `build_flat_quadtree`'s old `max_nodes = 4*N+4` bound could
+`IndexError`-crash on an unlucky draw where two particles land very close
+together (forcing recursion to the depth floor, needing more node ids
+than 4/particle covers) — raised to `8*N + 4*50`, directly relevant here
+since collapse scenarios make close pairs the norm, not an edge case.
+
+Final N=5000 timing: uniform — Barnes-Hut `5.0ms`, uniform-FMM `21.9ms`,
+adaptive-FMM `34.4ms`; clustered (`r~u^3`) — Barnes-Hut `5.2ms`,
+uniform-FMM `67.2ms`, adaptive-FMM `105.3ms`. The fast tree builder's
+speedup helped Barnes-Hut far more than adaptive FMM (its walk was
+already numba-jitted and cheap; construction was effectively its entire
+cost), so Barnes-Hut is now the fastest solver at every N/distribution
+tested here — flipping `FMM.ipynb`'s Phase 3 finding that FMM overtook
+Barnes-Hut by N=6400 (that comparison was measuring Barnes-Hut's since
+-fixed construction bottleneck, not an algorithmic property; `FMM.ipynb`
+updated accordingly). Adaptive FMM remains the most accurate and the most
+robust to clustering (near-flat cost uniform-to-clustered, vs. uniform
+-grid FMM's `21.9ms -> 67.2ms`), so it's kept as the right tool for a
+demo where cost predictability under an evolving, clustering density
+matters more than the fastest possible constant — matching the same
+"predictability over raw speed" reasoning already used to choose
+Barnes-Hut for the Phase 4 rescale.
+
 ## Progress
 
 - [x] Phase 1 — `nbody.py`, `Validation.ipynb`
@@ -232,5 +350,5 @@ bug.
 - [x] Phase 4 — `Galaxy_Collapse.ipynb`
 - [x] Performance optimization — numba-jitted Barnes-Hut/FMM
 - [x] Galaxy_Collapse rescaled to N=5000 with Barnes-Hut
-
-All phases complete.
+- [x] Performance optimization round 2 — fast tree construction + adaptive FMM
+- [ ] Phase 5 — cold-collapse (`f=0`) and slow-rotation (`f~0.2-0.3`) demo notebooks
