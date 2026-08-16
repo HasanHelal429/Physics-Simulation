@@ -38,7 +38,7 @@ def lj_force(r, ids_pairs, epsilon, sigma):
     """
     i, j = ids_pairs[:, 0], ids_pairs[:, 1]
     rij = r[:, i] - r[:, j]
-    dist = torch.linalg.norm(rij, dim=0)
+    dist = torch.sqrt(rij[0]**2 + rij[1]**2)
     Fmag = lj_force_magnitude(dist, epsilon, sigma)
     Fvec = Fmag / dist * rij
 
@@ -54,7 +54,8 @@ def lj_force(r, ids_pairs, epsilon, sigma):
 def lj_potential_energy(r, ids_pairs, epsilon, sigma):
     """Total Lennard-Jones potential energy, summed over all pairs."""
     i, j = ids_pairs[:, 0], ids_pairs[:, 1]
-    dist = torch.linalg.norm(r[:, i] - r[:, j], dim=0)
+    rij = r[:, i] - r[:, j]
+    dist = torch.sqrt(rij[0]**2 + rij[1]**2)
     return torch.sum(lj_potential(dist, epsilon, sigma))
 
 
