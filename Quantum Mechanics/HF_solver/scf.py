@@ -28,24 +28,36 @@ def _density_from_occupied(r, occupied):
     return total / (4 * np.pi * r**2)
 
 
-def compute_total_energy(r, rho, V_H, V_x, occupied):
-    """E_total = sum_nl(N_nl*eps_nl) - E_H - (1/3)*E_x.
+def compute_total_energy(r, rho, V_H, V_x, occupied, eps_c=None, V_c=None):
+    """E_total = sum_nl(N_nl*eps_nl) - E_H - (1/3)*E_x [- E_c_doublecount].
 
     Orbital eigenvalues double-count electron-electron interaction: summing
     N_nl*eps_nl over occupied shells counts the Hartree term twice and the
     (nonlinear) exchange term 4/3 times, so both must be corrected out. See
     HF_Solver_Plan.md Phase 6 for the derivation (Hartree: simple 1/2 factor;
     exchange: 1/3 factor from Euler's theorem on the rho**(4/3) functional).
+
+    If eps_c/V_c (correlation energy density and potential, from
+    potentials.pz81_correlation) are given, an LDA correlation
+    double-counting term is added too. Unlike Slater exchange, PZ81
+    correlation isn't a pure power law of rho, so there's no equivalent
+    closed-form "/3"-type shortcut -- the general Kohn-Sham double-counting
+    correction E_c[rho] - integral(V_c*rho) is evaluated directly instead.
     """
     sum_eps = sum(N_nl * eps_nl for _, _, N_nl, eps_nl, _ in occupied)
     E_H = 0.5 * trapezoid(V_H * rho * 4 * np.pi * r**2, r)
     E_x = 0.75 * trapezoid(V_x * rho * 4 * np.pi * r**2, r)
-    return sum_eps - E_H - E_x / 3
+    E_total = sum_eps - E_H - E_x / 3
+    if eps_c is not None:
+        E_c = trapezoid(eps_c * rho * 4 * np.pi * r**2, r)
+        E_total += E_c - trapezoid(V_c * rho * 4 * np.pi * r**2, r)
+    return E_total
 
 
 def run_scf(
     Z,
     alpha=pot.ALPHA_SCHWARZ,
+    method="xalpha",
     max_iter=200,
     mix_beta=0.3,
     tol_E=1e-6,
@@ -54,7 +66,13 @@ def run_scf(
     verbose=False,
     record_history=False,
 ):
-    """Run the Xa self-consistent field loop for atomic number Z to convergence.
+    """Run the self-consistent field loop for atomic number Z to convergence.
+
+    method="xalpha" (default, unchanged from before): Hartree + tunable
+    Slater/Xalpha local exchange, no correlation -- alpha applies.
+    method="lda": genuine Kohn-Sham LDA -- Hartree + exact-LDA Slater
+    exchange (alpha is ignored) + PZ81 correlation (potentials.pz81_correlation).
+    Unlike Xalpha, LDA has no free parameter to tune.
 
     Occupations come from shells.ground_state_configuration(Z) and are held
     fixed for the whole run. Converges when both |dE_total| < tol_E and the
@@ -65,6 +83,9 @@ def run_scf(
     visualizing/animating the SCF loop itself (Phase 7); the physics is
     unaffected either way.
     """
+    if method not in ("xalpha", "lda"):
+        raise ValueError(f"method must be 'xalpha' or 'lda', got {method!r}")
+
     r, h = grid if grid is not None else atomic_scf.default_grid(Z)
     config = shells.ground_state_configuration(Z)
 
@@ -81,9 +102,15 @@ def run_scf(
     dE = dn = np.inf
 
     for it in range(1, max_iter + 1):
-        V = pot.effective_potential(r, rho, Z, alpha)
         V_H = pot.hartree_potential(r, rho)
-        V_x = pot.slater_exchange_potential(r, rho, alpha)
+        if method == "lda":
+            V_xc, eps_c = pot.lda_xc_potential(r, rho)
+            _, V_c = pot.pz81_correlation(rho)
+            V_x = V_xc - V_c  # the exact-LDA Slater exchange piece alone, for E_x's own bookkeeping
+        else:
+            V_x = pot.slater_exchange_potential(r, rho, alpha)
+            V_xc, eps_c, V_c = V_x, None, None
+        V = -Z / r + V_H + V_xc
 
         occupied = []
         for l, ns in by_l.items():
@@ -93,7 +120,7 @@ def run_scf(
                 occupied.append((n, l, N_nl, energies[idx], u[:, idx]))
 
         rho_new = _density_from_occupied(r, occupied)
-        E_total = compute_total_energy(r, rho, V_H, V_x, occupied)
+        E_total = compute_total_energy(r, rho, V_H, V_x, occupied, eps_c, V_c)
 
         dn = trapezoid(np.abs(rho_new - rho) * 4 * np.pi * r**2, r)
         dE = abs(E_total - E_prev) if E_prev is not None else np.inf
@@ -131,12 +158,14 @@ def run_scf(
 
     return {
         "Z": Z,
+        "method": method,
         "r": r,
         "h": h,
         "rho": rho,
         "V": V,
         "V_H": V_H,
         "V_x": V_x,
+        "V_c": V_c,
         "config": config,
         "orbitals": orbitals,
         "orbital_energies": orbital_energies,

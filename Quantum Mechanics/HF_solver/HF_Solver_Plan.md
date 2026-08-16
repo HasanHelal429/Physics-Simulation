@@ -131,9 +131,87 @@ All three land in the right qualitative spectral region (Na/K: visible/near-IR; 
 
 **Known limitations**: no orbital relaxation (see Koopmans' error above); no spin-orbit coupling (single line per transition, not the fine-structure doublets real spectra show, e.g. Na D1/D2); single-configuration/single-active-electron only (no shake-up, no correlation, no full term-symbol structure). Documented in `spectra.py`'s module docstring and in `Hartree_Fock.ipynb`.
 
+## Phase 8 — Genuine Kohn-Sham LDA (`potentials.pz81_correlation`, `scf.run_scf(method="lda")`) ✅ done
+
+Despite the project's name, everything through Phase 7 is **not** actually
+Hartree-Fock (no exact non-local exchange) and **not** actually Kohn-Sham
+DFT either (Slater/Xα local exchange only, with a tunable `alpha` and no
+correlation functional at all). This phase adds the one piece needed to
+make the second of those true: a real correlation functional, paired with
+exchange fixed at its exact theoretical value (`ALPHA_LDA=2/3`, already
+present as a preset, just never used with a matching correlation term) --
+turning the "tunable Xα local-exchange model" into genuine, parameter-free
+Kohn-Sham LDA.
+
+- **`potentials.pz81_correlation(rho)`**: the Perdew-Zunger (1981)
+  parametrization of the correlation energy per electron `eps_c(rs)` (a fit
+  to Ceperley-Alder quantum Monte Carlo data for the unpolarized electron
+  gas, via the Wigner-Seitz radius `rs = (3/(4*pi*rho))**(1/3)`), plus its
+  potential `V_c = eps_c - (rs/3)*d(eps_c)/d(rs)`. Two branches (`rs<1`
+  logarithmic, `rs>=1` a rational Padé-like form), each independently
+  curve-fit to the QMC data.
+- **`potentials.lda_xc_potential`/`effective_potential_lda`**: combine
+  `slater_exchange_potential(r, rho, ALPHA_LDA)` with `pz81_correlation`.
+  Kept as new, separate functions rather than modifying
+  `effective_potential`/`slater_exchange_potential` in place, so every
+  existing Xα-based result above is untouched.
+- **`scf.run_scf(Z, method="lda")`**: new opt-in `method` parameter
+  (`"xalpha"`, the previous and still-default behavior, vs `"lda"`).
+  `compute_total_energy` gained an analogous optional `eps_c`/`V_c` pair:
+  since PZ81 correlation isn't a pure power law of `rho` the way Slater
+  exchange is, there's no equivalent closed-form Euler's-theorem
+  double-counting shortcut (the existing `-E_x/3` term) -- the general
+  Kohn-Sham double-counting correction `E_c[rho] - integral(V_c*rho)` is
+  evaluated directly instead when `method="lda"` supplies `eps_c`/`V_c`.
+- **Bug found and fixed while validating**: far out on the radial grid the
+  density underflows to exact float64 `0.0`; `pz81_correlation`'s
+  `rs = (.../rho)**(1/3)` then hits a literal division by zero (`rs=inf`),
+  and the low-density branch's `V_c` formula evaluates a literal `0*inf`,
+  producing `NaN`. That `NaN` then poisoned the effective-potential matrix
+  passed to `solve_radial_channel`, making `scipy.sparse.linalg.eigsh`'s
+  internal `splu` factorization fail with `"Factor is exactly singular"` --
+  first seen running Ne, not He (He's grid/density profile happened not to
+  underflow within its range). Physically `rho=0` just means
+  `eps_c, V_c -> 0` (the true limit of both branches as `rs -> infinity`);
+  fixed by clipping `rho` to a `1e-300` floor before computing `rs`, far
+  below any physically meaningful density.
+
+**Validated**:
+- *Correlation functional itself*: `eps_c`, `V_c` negative everywhere
+  tested (`rs=0.5` to `20`); continuous across the `rs=1` branch boundary
+  to the fit's own precision (~3e-5 Ha discontinuity, a known, tiny
+  artifact of the published PZ81 parametrization -- its two branches were
+  independently curve-fit and only approximately match at the boundary by
+  construction, not a bug to chase to exact zero).
+- *Self-interaction error (hydrogen, Z=1, one electron)*: exact HF is
+  exact for one electron (exchange exactly cancels self-Hartree, already
+  confirmed via the zeroed-potential check in `Radial SCF Validation.ipynb`).
+  LDA has no such exact cancellation -- a real, textbook DFT limitation,
+  cleanly isolated here with no many-electron physics to confound it:
+  exact-LDA-exchange-only gives `E=-0.40652 Ha` (SIE `+0.09348 Ha` vs. the
+  exact `-0.5 Ha`); adding PZ81 correlation improves this to `E=-0.44588
+  Ha` (SIE `+0.05412 Ha`) -- correlation partially, not fully, compensates
+  the self-interaction error, consistent with the DFT literature.
+- *Closed-shell atoms (He, Ne, Ar)*: LDA total energies land closer to (but
+  still short of) literature non-relativistic HF than Xα(Schwarz) does for
+  every atom tested -- `He: LDA=-2.83418 vs Xα=-2.76637 vs HF=-2.86168`;
+  `Ne: LDA=-128.22351 vs Xα=-128.03490 vs HF=-128.54700`; `Ar:
+  LDA=-525.92506 vs Xα=-525.89503 vs HF=-526.81800` Ha. Reported honestly
+  as a known DFT phenomenon (fortuitous partial cancellation between LDA's
+  exchange underestimate and correlation overestimate), not evidence that
+  LDA's individual exchange or correlation pieces are more accurate than
+  exact HF exchange -- the hydrogen SIE check above is the more diagnostic,
+  uncompensated measurement of LDA's actual error character.
+- All three LDA runs integrate to the exact electron count
+  (`Q(r_max) = N` to 6 decimal places) and reproduce the unchanged Xα
+  numbers exactly when re-run through `method="xalpha"` (regression check).
+
+See `SCF Validation.ipynb` section 5 for the runnable validation.
+
 ## Verification
 
 1. ✅ Run `Radial SCF Validation.ipynb` first: confirm exact hydrogen energy match and l-degeneracy (Phase 2's acid test) before trusting anything downstream.
 2. ✅ In `scf.py`, run `run_scf(Z)` for He, Ne, Ar and confirm convergence within the stated tolerances and `Q(r_max) ≈ N` each iteration. See `SCF Validation.ipynb` and `media/phase3_6_scf_validation.png`.
 3. ✅ Run `run_scf` for Cr and Cu and confirm the hardcoded exception configurations are actually used (print/inspect occupations). Also spot-checked Fe (normal Madelung d-block) and Gd (f-block exception, confirms l_max=3/f-orbital support end-to-end) directly — not folded into the notebook since Gd takes ~22 minutes at the default N=4000 grid (noted as a performance consideration for Phase 7, not a correctness issue).
 4. ✅ Ran `Hartree_Fock.ipynb` end-to-end for Ar (movie + full visualization suite) and Na/Ar/K (emission spectra vs. literature resonance lines) — see the Phase 7 sections above for what was produced and how it checks out.
+5. ✅ Ran `SCF Validation.ipynb` section 5 end-to-end: `pz81_correlation` sign/continuity checks, hydrogen self-interaction-error comparison, and `method="lda"` vs `method="xalpha"` vs literature HF for He/Ne/Ar — see Phase 8 above. Confirmed `method="xalpha"` (the default) still reproduces every pre-existing number exactly (regression check).
