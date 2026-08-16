@@ -91,6 +91,18 @@ def run_scf(
     shape = X.shape
     V_nuc = pot.nuclear_potential(X, Y, Z, nuclei)
 
+    # nuclear-nuclear repulsion: zero for a single atom (Phases 3-4, where
+    # this was never needed), but essential for anything with more than one
+    # nucleus -- found missing via a real bug: H2's electronic-only energy
+    # (-1.963 Ha) looked wildly overbound until adding Z_A*Z_B/R (0.714 Ha
+    # at R=1.4) brought it in line with Diatomic_HF_solver's cross-check.
+    E_nuc_nuc = 0.0
+    for i in range(len(nuclei)):
+        Z_i, xi, yi, zi, _ = nuclei[i]
+        for j in range(i + 1, len(nuclei)):
+            Z_j, xj, yj, zj, _ = nuclei[j]
+            E_nuc_nuc += Z_i * Z_j / np.sqrt((xi - xj) ** 2 + (yi - yj) ** 2 + (zi - zj) ** 2)
+
     # crude seed density: a normalized Gaussian blob at the origin
     R2 = X**2 + Y**2 + Z**2
     rho = np.exp(-R2)
@@ -128,7 +140,7 @@ def run_scf(
         sum_eps = float(np.sum(occ * energies))
         E_H = 0.5 * _integrate(V_H * rho, dx)
         E_x = 0.75 * _integrate(V_x * rho, dx)
-        E_total = sum_eps - E_H - E_x / 3
+        E_total = sum_eps - E_H - E_x / 3 + E_nuc_nuc
         if eps_c is not None:
             E_c = _integrate(eps_c * rho, dx)
             E_total += E_c - _integrate(V_c * rho, dx)
