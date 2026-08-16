@@ -42,3 +42,40 @@ def leapfrog_step(psi_prev, psi_curr, dt, dx, dy, c, mask=None, source=None):
     if source is not None:
         psi_next = psi_next + source
     return psi_next
+
+
+def sponge_mask(shape, dx, dy, dt, width, decay_rate=8.0, sides=('left', 'right', 'top', 'bottom')):
+    """Multiplicative damping mask for a cheap 'sponge-layer' absorbing
+    boundary: multiply psi_curr and psi_prev by this mask after every
+    leapfrog_step so outgoing waves gradually shed amplitude in a
+    boundary layer of physical thickness `width`, instead of reflecting
+    off leapfrog_step's hard Dirichlet wall at the array edge. This is
+    not a rigorous PML -- residual reflection is small but nonzero --
+    just a simple, robust damping profile that works for any c(x,y).
+
+    Per cell, mask = exp(-decay_rate * ramp * dt), where `ramp` grows
+    quadratically from 0 at the layer's interior edge to 1 at the wall
+    (a sharp on/off transition would itself scatter the wave). The
+    exp(...*dt) form means the total absorption over a given physical
+    time doesn't secretly depend on the timestep/Courant number chosen.
+    `sides` selects which of the domain's four edges get a layer.
+    """
+    NX, NY = shape
+    x = np.arange(NX) * dx
+    y = np.arange(NY) * dy
+    Lx, Ly = (NX - 1) * dx, (NY - 1) * dy
+
+    def ramp(depth_into_layer):
+        return np.clip(depth_into_layer / width, 0.0, 1.0)**2
+
+    rate = np.zeros(shape)
+    if 'left' in sides:
+        rate = np.maximum(rate, ramp(width - x)[:, None])
+    if 'right' in sides:
+        rate = np.maximum(rate, ramp(width - (Lx - x))[:, None])
+    if 'bottom' in sides:
+        rate = np.maximum(rate, ramp(width - y)[None, :])
+    if 'top' in sides:
+        rate = np.maximum(rate, ramp(width - (Ly - y))[None, :])
+
+    return np.exp(-decay_rate * rate * dt)
