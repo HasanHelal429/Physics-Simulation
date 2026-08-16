@@ -61,6 +61,8 @@ Orbital_Dynamics/
         Barnes_Hut.ipynb       # Phase 2
         FMM.ipynb              # Phase 3
         Galaxy_Collapse.ipynb  # Phase 4
+        Cold_Collapse.ipynb            # Phase 5
+        Slow_Rotation_Collapse.ipynb   # Phase 5
         legacy/
         media/
 ```
@@ -342,6 +344,82 @@ matters more than the fastest possible constant — matching the same
 "predictability over raw speed" reasoning already used to choose
 Barnes-Hut for the Phase 4 rescale.
 
+## Phase 5 — `Cold_Collapse.ipynb` and `Slow_Rotation_Collapse.ipynb`
+
+Two companions to `Galaxy_Collapse.ipynb`, both using the same `N=5000`
+disk setup but with much weaker (or no) rotational support, so self
+-gravity actually wins: `Cold_Collapse.ipynb` (`f=0`, completely at rest)
+and `Slow_Rotation_Collapse.ipynb` (`f=0.25`, only `~6%` of the
+centrifugal support `f=1` would give -- since support scales `f^2` --
+still far too little to prevent collapse, but enough to leave real,
+conserved angular momentum in the post-collapse remnant).
+
+Both notebooks found solver choice from a short Barnes-Hut pilot run to
+locate the real, densest configuration of *this* trajectory, then
+benchmarked Barnes-Hut and adaptive FMM there directly (extending
+`Galaxy_Collapse.ipynb`'s "validate on real dynamics, not a synthetic
+snapshot" practice one step earlier, since here the clustering is the
+whole point rather than a late-stage side effect). Found a genuine,
+previously-untriggered bug doing this: `adaptive_fmm_accel` **segfaulted**
+on the real peak-collapse snapshot. Root cause -- `_dual_tree_m2l`'s
+traversal stack (sized `4*n_nodes+16`) and its near-field pair buffer
+(sized by the caller's `max_near_pairs_per_particle` budget) were both
+assumed-safe bounds that aren't rigorous ones: a cross-pair that fails the
+opening-angle test also recurses, and a configuration dense enough (many
+particles converging through a near-common point almost simultaneously,
+exactly what a free-fall collapse produces) can push more node-pairs, or
+record more near-field pairs, than either bound anticipated. Since numba
+nopython mode doesn't bounds-check array writes, overflowing either one
+silently corrupted memory instead of raising a catchable error. Neither
+this session's earlier synthetic-clustered test (radii `~u^3`) nor the
+uniform-random benchmarks triggered it -- only running the actual collapse
+trajectory did, underlining the value of validating on real dynamics
+rather than synthetic stand-ins. Fixed by making both arrays dynamically
+growable (double capacity on demand, amortized O(1), like a dynamic
+array) instead of trying to guess a tighter bound that could still be
+wrong for some future, even more extreme collapse.
+
+At the real peak-collapse snapshot, adaptive FMM turned out essentially
+exact (mean error `~1e-7` to `2.5e-15` vs. direct summation across the two
+notebooks) but 1000x+ slower than Barnes-Hut (`~4.6-4.7s` vs. `~3.5-3.9ms`
+at `N=5000`) -- because the collapse is so dense that nearly every
+interaction fails the `min_sep2` guard and falls through to exact
+near-field summation, so it isn't getting real O(N) leverage in this
+regime, just tree-traversal overhead on top of what's effectively brute
+force. Barnes-Hut's own error at this snapshot (mean `~0.8-0.9%`, worst
+-case individual-particle error `15-33%`) is higher than its typical
+uniform-distribution level but affects only a small tail of particles at
+one transient, densest instant -- not a sustained bias. Chose Barnes-Hut
+for both full runs on that basis (same "quantify the tradeoff, don't
+assume" reasoning `Galaxy_Collapse.ipynb` used), with the post-run
+conservation check as the real test of whether the transient tail error
+actually mattered.
+
+It didn't: both runs (`softening=0.05`, `dt=T_edge/2000`, `3000` steps
+= `1.5*T_edge`, chosen from the pilot's finding that collapse peaks around
+`t~0.15-0.16*T_edge` and rebounds by `~0.8*T_edge`) stayed well controlled
+-- `Cold_Collapse`: `1.47%` energy drift, spurious `|L|` (should be exactly
+`0`, since `f=0` starts with zero angular momentum) stayed at `5.5e-4`,
+tiny in absolute terms; `Slow_Rotation_Collapse`: `1.75%` energy drift,
+`0.51%` L drift relative to its real, nonzero `L0=0.124`. Both far more
+dramatic than `Galaxy_Collapse.ipynb`'s mild `0.70 -> 0.32` concentration:
+median radius crashes to `~0.09-0.10` (an `~85%` collapse) by
+`t~0.15-0.16*T_edge` in both cases, then rebounds into an extended,
+violently-relaxed halo (final median radius `~0.40-0.50`, with a
+long, genuinely escaping tail -- 99th-percentile radius `11-14`, max
+`17-19`, vs. `R0=1`). Reported, as with `Galaxy_Collapse.ipynb`'s own
+relaxation tail, as a real, energy-conserving N-body effect (violent
+relaxation: the potential changes fast enough during the crash that
+individual particle energies scramble, only the total stays conserved),
+not a numerical artifact. The qualitative difference between the two:
+`Cold_Collapse`'s remnant has no preferred sense of rotation (it starts
+and stays at `L~0`), while `Slow_Rotation_Collapse`'s retains its real,
+conserved initial angular momentum through the crash. Per-step cost
+(a few ms at `N=5000`, courtesy of this session's fast tree construction)
+made each full run take well under a minute, vs. the ~16 minutes
+`Galaxy_Collapse.ipynb`'s original `N=1000` run needed before that
+optimization.
+
 ## Progress
 
 - [x] Phase 1 — `nbody.py`, `Validation.ipynb`
@@ -351,4 +429,6 @@ Barnes-Hut for the Phase 4 rescale.
 - [x] Performance optimization — numba-jitted Barnes-Hut/FMM
 - [x] Galaxy_Collapse rescaled to N=5000 with Barnes-Hut
 - [x] Performance optimization round 2 — fast tree construction + adaptive FMM
-- [ ] Phase 5 — cold-collapse (`f=0`) and slow-rotation (`f~0.2-0.3`) demo notebooks
+- [x] Phase 5 — `Cold_Collapse.ipynb` (`f=0`) and `Slow_Rotation_Collapse.ipynb` (`f=0.25`)
+
+All phases complete.

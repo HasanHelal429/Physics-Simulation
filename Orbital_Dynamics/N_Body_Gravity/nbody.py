@@ -581,10 +581,30 @@ def _dual_tree_m2l(node_mass, node_comx, node_comy, node_half, node_is_leaf, nod
     local_Hxy = np.zeros(n_nodes)
     local_Hyy = np.zeros(n_nodes)
 
+    # `max_near_pairs` (a caller-supplied `max_near_pairs_per_particle * N`
+    # budget) is likewise not a rigorous bound -- a sufficiently dense
+    # collapsed cluster can force far more leaf-leaf pairs into the
+    # near-field path than that budget anticipates (same silent-corruption
+    # risk as the traversal stack above, same fix: grow instead of guess).
     near_i = np.empty(max_near_pairs, dtype=np.int64)
     near_j = np.empty(max_near_pairs, dtype=np.int64)
     n_near = 0
 
+    # `4*n_nodes+16` looks like a safe upper bound (each node's self-pair
+    # split pushes at most 16 child pairs) but isn't one: a cross pair
+    # that fails the MAC also recurses, and for a real post-collapse
+    # snapshot (many particles converging through a near-common point
+    # nearly simultaneously -- exactly the free-fall scenario this was
+    # written for) that recursion can push far more node-pairs than that
+    # bound anticipates. Numba nopython mode doesn't bounds-check array
+    # writes, so overflowing this silently corrupted memory and segfaulted
+    # instead of raising -- found by running the actual cold-collapse
+    # trajectory, not a synthetic test. Fixed by growing the stack
+    # (doubling, amortized O(1) like a dynamic array) whenever fewer than
+    # 16 slots remain -- 16 covers the worst case of any single iteration
+    # below (the self-pair split; every other branch pushes at most 4) --
+    # instead of trying to guess a tighter bound that could still be wrong
+    # for some future, even more extreme collapse.
     stack_t = np.empty(4 * n_nodes + 16, dtype=np.int64)
     stack_s = np.empty(4 * n_nodes + 16, dtype=np.int64)
     stack_t[0] = 0
@@ -593,6 +613,13 @@ def _dual_tree_m2l(node_mass, node_comx, node_comy, node_half, node_is_leaf, nod
     theta2 = theta * theta
 
     while sp > 0:
+        if sp + 16 > stack_t.shape[0]:
+            new_cap = stack_t.shape[0] * 2
+            grown_t = np.empty(new_cap, dtype=np.int64)
+            grown_s = np.empty(new_cap, dtype=np.int64)
+            grown_t[:sp] = stack_t[:sp]
+            grown_s[:sp] = stack_s[:sp]
+            stack_t, stack_s = grown_t, grown_s
         sp -= 1
         t, s = stack_t[sp], stack_s[sp]
         ms = node_mass[s]
@@ -665,6 +692,13 @@ def _dual_tree_m2l(node_mass, node_comx, node_comy, node_half, node_is_leaf, nod
             # double-counting the force.
             pt, ps = node_particle[t], node_particle[s]
             if pt < ps:
+                if n_near >= near_i.shape[0]:
+                    new_cap = near_i.shape[0] * 2
+                    grown_i = np.empty(new_cap, dtype=np.int64)
+                    grown_j = np.empty(new_cap, dtype=np.int64)
+                    grown_i[:n_near] = near_i[:n_near]
+                    grown_j[:n_near] = near_j[:n_near]
+                    near_i, near_j = grown_i, grown_j
                 near_i[n_near] = pt
                 near_j[n_near] = ps
                 n_near += 1
