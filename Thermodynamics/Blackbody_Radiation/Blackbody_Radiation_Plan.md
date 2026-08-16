@@ -82,5 +82,16 @@ effect should show an even starker bare-rock/actual mismatch.
   `2.0e-6` - `2.7e-10` relative error across 300-10000 K. Wien's
   displacement law: `lambda_peak*T` constant to `2.7e-8` relative error
   across the same range.
-- [ ] Phase 2 — `Photon_Monte_Carlo.ipynb`
-- [ ] Phase 3 — `Planetary_Energy_Balance.ipynb`
+- [x] Phase 2 — `Photon_Monte_Carlo.ipynb`. Chi-squared goodness of fit
+  between 500,000 Monte Carlo photons and the analytic Planck
+  distribution: reduced chi2=0.643, p=0.9589 (no evidence of a sampling
+  bug). Animation shows the histogram converging from N=10 to N=200,000.
+- [x] Phase 3 — `Planetary_Energy_Balance.ipynb`. Mercury and Mars
+  (negligible atmospheres) matched their bare-rock predictions to <5%.
+  Earth's bare-rock/actual gap was 34.0 K (textbook figure: ~33 K).
+  Venus's gap (507.9 K) was 15x Earth's -- the runaway-greenhouse
+  signature. Implied greenhouse parameter ordered correctly with real
+  atmospheric thickness: Mars (~0) < Mercury (~0.03) < Earth (~0.39) <
+  Venus (~0.99).
+
+All phases complete.
