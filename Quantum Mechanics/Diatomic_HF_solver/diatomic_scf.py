@@ -137,15 +137,32 @@ def solve_two_center_channel(mu, nu, lam, Z_A, Z_B, R, V_extra=None, n_states=4,
     if sigma is None:
         sigma = -0.5 * (Z_A + Z_B) ** 2
 
-    ncv = max(2 * n_states + 1, 20)
-    for attempt in range(4):
+    # Found via a real SCF divergence (diatomic_driver.run_scf on H2): once
+    # V_extra (Hartree+exchange) evolves away from the bare two-center
+    # problem, eigsh's shift-invert can return a "converged" result (no
+    # exception) that is nonetheless spurious -- multiple returned
+    # eigenvalues silently collapsing toward the same wrong value near
+    # sigma. A bare try/except around eigsh (only catching outright
+    # exceptions) cannot detect this; checking the actual residual
+    # ||H w - E M w|| for each returned eigenpair does, and is the correct
+    # general test for "did ARPACK actually find genuine eigenpairs."
+    ncv = max(4 * n_states + 1, 40)
+    for attempt in range(6):
         try:
             energies, w = eigsh(H, k=n_states, M=M, sigma=sigma * 1.2**attempt, which="LM", ncv=ncv)
-            break
         except Exception:
-            ncv = int(ncv * 1.5) + 5
-    else:
-        raise RuntimeError(f"solve_two_center_channel: eigsh failed to converge for lambda={lam}, R={R}")
+            ncv = int(ncv * 1.5) + 10
+            continue
 
-    order = np.argsort(energies)
-    return energies[order], w[:, order]
+        order = np.argsort(energies)
+        energies, w = energies[order], w[:, order]
+        Mw = M @ w
+        resid = np.linalg.norm(H @ w - Mw * energies[None, :], axis=0) / (np.linalg.norm(Mw, axis=0) + 1e-300)
+        if np.all(resid < 1e-6):
+            return energies, w
+        ncv = int(ncv * 1.5) + 10
+
+    raise RuntimeError(
+        f"solve_two_center_channel: eigsh did not converge to genuine eigenpairs "
+        f"(worst residual {resid.max():.2e}) for lambda={lam}, R={R}"
+    )
