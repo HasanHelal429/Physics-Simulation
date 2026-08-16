@@ -106,5 +106,22 @@ law's `B2=0` (measured directly in `Ideal_Gas`, for the same N and box).
   drifting, unlike the legacy prototype's ad hoc half-Euler scheme. Note:
   the LJ repulsive core is stiff -- `dt=1e-3` let energy drift >100%;
   `dt=5e-5` was needed for a bounded result.
-- [ ] Phase 2 — `Condensation.ipynb`
-- [ ] Phase 3 — `Equation_of_State.ipynb`
+- [x] Phase 2 — `Condensation.ipynb`. Equilibrated a gas at T=1.0, then
+  branched into a cooled (T=0.03) and a held-hot (T=1.0) run from the
+  identical state. Mean-neighbor clustering metric grew monotonically
+  from 0.90 to 2.45 under cooling (2.2x the held-hot run's 1.09, which
+  stayed flat) -- clustering `Ideal_Gas`'s attraction-free collisions
+  cannot produce.
+- [x] Phase 3 — `Equation_of_State.ipynb`. Measured Z=P/(nkT) via the
+  same wall-momentum method as `Ideal_Gas` across 3 densities at T=0.5,
+  4 replicas each. Z decreased monotonically (0.85 -> 0.78 -> 0.66) as
+  density increased, unlike `Ideal_Gas`'s Z=1 always. Fitted second
+  virial coefficient (`-3.9e-3`) matched the first-principles
+  `second_virial_coefficient` prediction (`-5.4e-3`) in sign and order of
+  magnitude (0.72x) -- a real quantitative check, not just a plausible
+  -looking trend. Getting a clean signal required substantially longer
+  steady-state averaging windows than an initial short-run attempt,
+  which was noisy enough to scatter Z above and below 1 with no visible
+  trend.
+
+All phases complete.
