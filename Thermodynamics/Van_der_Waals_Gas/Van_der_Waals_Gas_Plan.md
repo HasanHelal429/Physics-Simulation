@@ -111,7 +111,11 @@ law's `B2=0` (measured directly in `Ideal_Gas`, for the same N and box).
   identical state. Mean-neighbor clustering metric grew monotonically
   from 0.90 to 2.45 under cooling (2.2x the held-hot run's 1.09, which
   stayed flat) -- clustering `Ideal_Gas`'s attraction-free collisions
-  cannot produce.
+  cannot produce. Re-rendered at N=5,000 (up from 150) once
+  `build_neighbor_pairs` made it affordable (~70s total physics runtime);
+  same clustering ratio (2.3x) confirms the physics didn't change, just
+  the resolution -- the larger run shows clear web-like filament
+  structure the original's noisier, sparser version couldn't resolve.
 - [x] Phase 3 — `Equation_of_State.ipynb`. Measured Z=P/(nkT) via the
   same wall-momentum method as `Ideal_Gas` across 3 densities at T=0.5,
   4 replicas each. Z decreased monotonically (0.85 -> 0.78 -> 0.66) as
