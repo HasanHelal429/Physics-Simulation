@@ -9,3 +9,6 @@ General_Relativity/
 
 # Claude Code personal/machine-specific settings (not shared config)
 .claude/settings.local.json
+
+# Claude Code worktrees (session-isolated copies, not project content)
+.claude/worktrees/
