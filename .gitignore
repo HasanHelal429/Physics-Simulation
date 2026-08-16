@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# General_Relativity/ is its own separate git repo (own history + GitHub
+# remote) nested inside this one -- excluded here so it doesn't get
+# swallowed as a broken embedded-repo reference.
+General_Relativity/
+
+# Claude Code personal/machine-specific settings (not shared config)
+.claude/settings.local.json

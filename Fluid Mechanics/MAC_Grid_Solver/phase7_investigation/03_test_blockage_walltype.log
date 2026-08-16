@@ -1,0 +1,33 @@
+
+=== A: current setup (high blockage, free-slip): blockage=0.125 (H=8.0D), wall=free_slip, grid=200x80 ===
+  step 400: t=10.2 envelope=2.1114e-01 max|div|=1.46e-09
+  step 800: t=20.8 envelope=4.0350e-01 max|div|=9.38e-09
+  step 1200: t=31.3 envelope=4.0819e-01 max|div|=9.99e-09
+  step 1600: t=41.8 envelope=4.1427e-01 max|div|=9.84e-09
+  step 2000: t=52.3 envelope=4.1564e-01 max|div|=9.80e-09
+  step 2400: t=62.8 envelope=4.1611e-01 max|div|=9.78e-09
+  step 2800: t=73.3 envelope=4.1630e-01 max|div|=9.77e-09
+  3055 steps in 36.2s
+
+=== B: low blockage, free-slip: blockage=0.030 (H=33.3D), wall=free_slip, grid=200x333 ===
+  step 400: t=10.5 envelope=2.1306e-01 max|div|=2.04e-10
+  step 800: t=21.3 envelope=3.8601e-01 max|div|=1.00e-08
+  step 1200: t=32.0 envelope=4.0319e-01 max|div|=1.03e-08
+  step 1600: t=42.8 envelope=4.0993e-01 max|div|=1.02e-08
+  step 2000: t=53.5 envelope=4.1248e-01 max|div|=1.02e-08
+  step 2400: t=64.2 envelope=4.1321e-01 max|div|=1.02e-08
+  step 2800: t=75.0 envelope=4.1347e-01 max|div|=1.02e-08
+  2988 steps in 82.1s
+
+=== C: current blockage, no-slip walls: blockage=0.125 (H=8.0D), wall=no_slip, grid=200x80 ===
+  step 400: t=9.8 envelope=2.4889e-01 max|div|=3.89e-11
+  step 800: t=19.9 envelope=3.7721e-01 max|div|=3.90e-10
+  step 1200: t=29.9 envelope=3.8431e-01 max|div|=3.93e-10
+  step 1600: t=39.9 envelope=3.9434e-01 max|div|=4.11e-10
+  step 2000: t=49.9 envelope=3.9809e-01 max|div|=4.29e-10
+  step 2400: t=59.9 envelope=3.9974e-01 max|div|=4.16e-10
+  step 2800: t=69.9 envelope=4.0036e-01 max|div|=4.20e-10
+  step 3200: t=79.9 envelope=4.0070e-01 max|div|=4.24e-10
+  3204 steps in 33.8s
+
+DONE

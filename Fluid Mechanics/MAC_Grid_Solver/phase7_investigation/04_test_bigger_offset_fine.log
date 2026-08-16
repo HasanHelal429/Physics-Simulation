@@ -1,0 +1,36 @@
+
+=== offset=0.1D (2.5 cells), grid=500x200 ===
+  step 400: t=3.9 envelope=5.9840e-03 max|div|=3.45e-08
+  step 800: t=8.0 envelope=3.8296e-02 max|div|=3.64e-08
+  step 1200: t=12.2 envelope=3.7783e-02 max|div|=3.56e-08
+  step 1600: t=16.3 envelope=3.4596e-02 max|div|=7.82e-09
+  step 2000: t=20.5 envelope=3.1011e-02 max|div|=1.58e-08
+  step 2400: t=24.6 envelope=2.4636e-02 max|div|=1.05e-08
+  step 2800: t=28.8 envelope=1.4326e-02 max|div|=1.13e-08
+  step 3200: t=33.0 envelope=1.6010e-02 max|div|=1.14e-08
+  step 3600: t=37.1 envelope=2.0736e-02 max|div|=1.15e-08
+  step 4000: t=41.3 envelope=2.0182e-02 max|div|=1.15e-08
+  step 4400: t=45.5 envelope=1.8535e-02 max|div|=1.15e-08
+  step 4800: t=49.6 envelope=1.7348e-02 max|div|=1.15e-08
+  step 5200: t=53.8 envelope=1.6508e-02 max|div|=1.15e-08
+  step 5600: t=58.0 envelope=1.5912e-02 max|div|=1.15e-08
+  5795 steps in 243.0s
+
+=== offset=0.2D (5.0 cells), grid=500x200 ===
+  step 400: t=3.8 envelope=1.5243e-02 max|div|=2.72e-08
+  step 800: t=7.8 envelope=3.9790e-02 max|div|=2.80e-08
+  step 1200: t=11.9 envelope=2.9051e-02 max|div|=2.79e-08
+  step 1600: t=15.9 envelope=2.3490e-02 max|div|=7.18e-08
+  step 2000: t=19.9 envelope=2.2075e-02 max|div|=9.55e-09
+  step 2400: t=24.0 envelope=2.1277e-02 max|div|=1.66e-08
+  step 2800: t=28.0 envelope=2.0784e-02 max|div|=6.39e-09
+  step 3200: t=32.0 envelope=2.0827e-02 max|div|=6.46e-09
+  step 3600: t=36.1 envelope=2.0868e-02 max|div|=6.47e-09
+  step 4000: t=40.1 envelope=2.0859e-02 max|div|=6.47e-09
+  step 4400: t=44.2 envelope=2.0830e-02 max|div|=6.47e-09
+  step 4800: t=48.2 envelope=2.0798e-02 max|div|=6.47e-09
+  step 5200: t=52.2 envelope=2.0771e-02 max|div|=6.47e-09
+  step 5600: t=56.3 envelope=2.0747e-02 max|div|=6.47e-09
+  5969 steps in 246.6s
+
+DONE

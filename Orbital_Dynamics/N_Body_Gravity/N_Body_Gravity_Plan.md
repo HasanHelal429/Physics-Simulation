@@ -1,0 +1,236 @@
+# Orbital_Dynamics / N_Body_Gravity — Design Plan
+
+## Context
+
+`Gas Cloud Collapse.ipynb` (loose, top-level in `Classical Mechanics/`) was
+a GPU (torch) prototype: a `QuadTreeNode` class doing Barnes-Hut
+self-gravity, an ad-hoc Euler-ish integrator (position gets a `dt^2/2`
+correction but velocity doesn't — not a real symplectic scheme), a separate
+hand-rolled central force pulling everything toward point `(1,1)`
+(unrelated to the N-body gravity itself), and `theta=2.5-10` (way looser
+than the standard `~0.5-1.0` opening angle, so its accuracy was never
+actually checked). It never validated Barnes-Hut against direct summation.
+
+`3_Body_Orbit_Phase_Space.ipynb` (loose, top-level) was a clean direct-sum
+3-body integrator (`solve_ivp`/DOP853) using the known periodic
+figure-eight-orbit initial conditions, plus a phase-space sensitivity
+sweep. Both are archived to `legacy/` here — thematically the same topic
+(gravity, N-body), and the figure-eight orbit is a genuinely useful
+independent validation case.
+
+This project formalizes three solvers for the same softened
+inverse-square-law gravity, so they can be validated against each other and
+against the same test cases: naive pairwise (direct O(N^2) summation),
+Barnes-Hut (single tree traversal, opening-angle criterion, monopole
+center-of-mass per node, O(N log N)), and a true Fast Multipole Method
+(multipole *and* local expansions with M2M/M2L/L2L translation operators,
+O(N) — a distinct, more involved algorithm from Barnes-Hut, not just
+"Barnes-Hut with a fancier name").
+
+House style, same as `Ising_Model`/`Lagrangian_Mechanics`: own
+`*_Plan.md`, plain module, phased build with a validation gate per phase,
+media to `media/`, originals archived to `legacy/`.
+
+## Numerical approach
+
+**`nbody.py`**:
+- `pairwise_accel(pos, mass, G, softening)` — vectorized direct O(N^2)
+  summation via numpy broadcasting.
+- Barnes-Hut: a recursive `QuadTreeNode` class (a tree is the one place in
+  this codebase's house style where a class is the natural fit) holding
+  bounds, center of mass, total mass, children; `build_quadtree(pos, mass)`
+  and `barnes_hut_accel(pos, mass, theta, G, softening)`.
+- FMM: a uniform-depth quadtree plus the five classic translation passes,
+  truncated at quadrupole order (monopole + dipole + quadrupole Cartesian
+  moments — a fixed low order, not a general arbitrary-order production
+  FMM): `p2m`, `m2m`, `m2l`, `l2l`, `l2p`, tied together by
+  `fmm_accel(pos, mass, levels, G, softening)`.
+- `leapfrog_step(...)` / `integrate(...)` — kick-drift-kick symplectic
+  integration, solver-agnostic (takes any of the three `accel_fn`s).
+- `energy(pos, vel, mass, G, softening)` / `angular_momentum(pos, vel,
+  mass)` — conservation diagnostics.
+
+## File layout
+
+```
+Orbital_Dynamics/
+    N_Body_Gravity/
+        N_Body_Gravity_Plan.md
+        nbody.py
+        Validation.ipynb       # Phase 1
+        Barnes_Hut.ipynb       # Phase 2
+        FMM.ipynb              # Phase 3
+        Galaxy_Collapse.ipynb  # Phase 4
+        legacy/
+        media/
+```
+
+## Phases
+
+**Phase 1 — `nbody.py` (pairwise + leapfrog) + `Validation.ipynb`.** — Done.
+Two-body Kepler orbit (`m1=m2=1`, `v_rel=0.8*v_circ`): simulated
+periapsis/apoapsis matched the analytic ellipse to `7.4e-6`/`2.2e-16`
+relative error, period exact to numerical precision, energy/L conserved to
+`8.4e-6`/`1.6e-14` over 4 periods. Second case originally planned as the
+legacy figure-eight choreography, but its close encounters (min separation
+`~0.0045`) are numerically stiff for a fixed-step symplectic
+integrator — energy blew up regardless of step size short of adding
+softening large enough to distort the (only exact for the unsoftened
+problem) orbit itself. Substituted the **Lagrange equilateral-triangle**
+solution instead (three equal masses circling their centroid,
+`Omega^2=G*3m/s^3`, no close encounters): triangle shape preserved to
+`5e-6`, energy/L conserved to `2.4e-11`/`1.4e-14` over 5 periods.
+
+**Phase 2 — Barnes-Hut solver + `Barnes_Hut.ipynb`.** — Done.
+Force error at `theta=0` matches direct summation to `5.6e-16` (exact, no
+approximation), grows monotonically and smoothly with `theta` (`7.6e-6` at
+`0.05` up to `0.36` at `1.5`). Chose `theta=0.5` (mean error `1.6e-2`) as
+the operating point. Fitted scaling exponents: pairwise ~`N^1.86`,
+Barnes-Hut ~`N^1.25`, over `N=100-3200` -- confirms the sub-quadratic
+trend, though this pure-Python recursive tree-walk's constant factor keeps
+it slower in absolute wall-clock time than vectorized numpy pairwise
+summation across the whole tested range (the crossover would need much
+larger `N` than tested here; noted honestly in the notebook rather than
+implying Barnes-Hut is already faster in practice at this scale). Phase 1's
+Kepler and Lagrange-triangle cases both reproduced through Barnes-Hut at
+`theta=0.5` within 2%.
+
+**Phase 3 — FMM solver + `FMM.ipynb`.** — Done.
+Uniform `2**levels` grid, P2M/M2M/M2L/L2L/L2P at monopole+quadrupole order,
+"well-separated" interaction lists built from a configurable buffer radius
+`R` (cells within `R` of the target's parent, excluding cells within `R`
+of the target itself). Building this caught a real bug: the parent-search
+radius and the self-exclusion radius must match -- using a wider exclusion
+than search radius *silently drops* cell pairs from the partition
+(undercounting mass, not just approximating it), which produced errors up
+to several hundred percent before being traced to this mismatch via a mass
+-accounting check (total interaction-list + near-field mass summed to
+exactly the expected total once fixed). Separately (not a bug, a tuning
+finding): even correctly implemented, the classic minimal buffer `R=1`
+leaves the closest interaction-list pairs only about one cell-width apart,
+marginal for a quadrupole-truncated expansion (mean error ~2%); `R=2`
+(now the default) guarantees a two-cell-width gap and was consistently
+~4x more accurate (mean error ~0.5-0.6% across `levels=2-6`). Phase 1's
+Kepler and Lagrange-triangle cases reproduced essentially exactly (both
+are small-N systems where nearly everything falls in the direct near-field
+block, not a stress test of the multipole machinery). Fitted scaling
+exponents over `N=100-6400`: pairwise ~`N^1.88`, Barnes-Hut ~`N^1.16`,
+FMM ~`N^1.05` -- close to the theoretical O(N), the shallowest of the
+three, and it overtook Barnes-Hut in absolute wall-clock time by
+`N=6400` in this run.
+
+**Phase 4 — `Galaxy_Collapse.ipynb`.** — Done.
+Benchmarked all three solvers at the actual `N=1000` first, as promised:
+pairwise `48ms`/call vs. Barnes-Hut `527ms` and FMM `690ms` -- confirms
+Phase 2/3's own finding that the crossover favoring the tree/FMM solvers
+in *absolute* wall-clock time (as opposed to asymptotic scaling) falls
+well above `N=1000` in this pure-Python implementation, so the long
+integration run uses plain `pairwise_accel`, not the more sophisticated
+solvers -- a deliberate, data-justified choice rather than reaching for
+the fanciest tool. `N=1000` particles on a uniform rotating disk
+(`f=0.7` of the disk's rigid circular-rotation rate), `softening=0.1`,
+`dt=T_edge/1000`, `8000` steps (`8*T_edge`). A first attempt with
+`softening~0.03` (comparable to the mean interparticle spacing) blew up:
+`18%` energy drift and a runaway 99th-percentile radius `>100*R0` --
+the same close-encounter stiffness as `Validation.ipynb`'s figure-eight
+substitution, here showing up statistically across many particles rather
+than in one orbit. `softening=0.1` brought drift down to `1.3e-4`
+(`L` conserved to `6e-16`) over the full 8000-step run. Result reported
+honestly: the bulk of the disk stays fairly compact (median radius
+`0.70 -> 0.32`) while a small tail evaporates to large radii (99th
+percentile `0.996 -> 14.8`, max `1.0 -> 47.1`) via genuine two-body
+relaxation -- a real, energy-conserving physical effect of simulating
+only `N=1000` discrete particles (real galaxies have `~10^11` stars,
+suppressing this by many orders of magnitude), not literal spiral-galaxy
+formation and not a numerical artifact.
+
+## Performance optimization (post-Phase 4)
+
+`Galaxy_Collapse.ipynb`'s `N=1000` run felt underwhelming and took ~16
+minutes, and the root cause traced back to Phase 2/3's own benchmarks:
+Barnes-Hut and FMM's tree/interaction-list walks were plain Python
+(recursion, dict lookups), which has a far larger constant factor than
+vectorized numpy -- so despite better asymptotic complexity, neither
+solver actually beat `pairwise_accel` until N~5000-6000, well above the
+range where a demo like `Galaxy_Collapse` needed to run. Two options were
+considered: GPU-accelerate `pairwise_accel` via torch (simple, but stays
+O(N^2), just with a higher ceiling), or compile the tree/grid hot loops
+with numba (more work, but actually realizes the better complexity).
+Chose numba.
+
+**Barnes-Hut**: the recursive `QuadTreeNode` object tree was replaced
+with flat numpy arrays (mass, COM, half-size, `is_leaf`, a `children`
+index array) built the same way as before (max 1 particle/leaf, so a
+leaf's monopole moment is exactly that one particle -- no separate
+leaf/internal-node force formula needed), then walked per-particle with a
+numba-jitted, explicit-stack (not recursive) function. Tree construction
+stayed plain Python/numpy since it was never the bottleneck. Result:
+identical accuracy (verified bit-for-bit against the pre-optimization
+numbers), and the crossover where Barnes-Hut beats pairwise in absolute
+wall-clock time moved from N~5000-6000 down to **N~800**.
+
+**FMM**: the dict-based per-level cells were replaced with dense
+`2**l x 2**l` numpy arrays (a uniform grid has a fixed cell count per
+level, so no hash lookup is needed at all). This made P2M and M2M plain
+*vectorized* numpy with no jitting required: P2M via `np.bincount`
+scatter-sums (mass/COM/quadrupole moments for every leaf cell in one
+call), M2M via reshape-and-pool (`.reshape(n,2,n,2).sum(axis=(1,3))` --
+a parent's 4 children are always a contiguous 2x2 block once cells sit on
+a grid, so this needs no explicit per-cell loop at all). The M2L
+interaction-list pass and the near-field direct sum (via a sorted
+-by-cell "cell list", the standard molecular-dynamics trick, giving O(1)
+neighbor lookup) were numba-jitted. Result: identical accuracy (again
+verified against the pre-optimization numbers), and FMM is now faster
+than the (also-optimized) Barnes-Hut at every tested N (4-17x, e.g. `95ms`
+vs `722ms` at N=25600) -- both solvers are ~10x+ faster than a naive
+pairwise_accel-based approach expects by N~50000.
+
+**Rescaling `Galaxy_Collapse.ipynb`**: with both solvers fast, re-benchmarked
+at `N=5000` before rebuilding the demo -- and found a genuine complication.
+A generic uniform-random benchmark still favors FMM (e.g. `23ms` vs
+Barnes-Hut's `131ms` at N=5000), but this simulation isn't a static uniform
+cloud; it's a self-gravitating disk that concentrates over time (already
+seen at N=1000). Directly testing a synthetic clustered distribution (radii
+drawn `~u^3` instead of `~sqrt(u)`) showed FMM's fixed-depth uniform grid
+is fragile under clustering -- at deeper resolution its cost blew up highly
+non-linearly (`74ms -> 165ms -> 1573ms` for `levels=7,9,11`), since a
+uniform grid can't locally refine a dense, cuspy core no matter how many
+levels it's given. Barnes-Hut's adaptive tree has no equivalent "guess the
+depth" parameter and stayed predictable. At the exact resolution FMM would
+normally pick for this N, it actually still edged out Barnes-Hut on that
+one synthetic snapshot -- so the honest reason to prefer Barnes-Hut here is
+predictability under an evolving, unknown-in-advance density profile, not
+a clear-cut speed win. Chose Barnes-Hut for the real run on that basis.
+
+A short pilot run (500 steps, real dynamics, not a synthetic snapshot) at
+`N=5000` found the naively-rescaled softening (`~0.045`, scaled down from
+the `N=1000` run's `0.1` by the mean-interparticle-spacing ratio) gave
+`0.7%`/`0.5*T_edge` energy drift; refining `dt` further didn't reduce it,
+confirming genuine two-body relaxation rather than integration error (same
+conclusion as `N=1000`). Settled on `softening=0.07`, `dt=T_edge/1000`,
+`4000` steps (`4*T_edge` -- half the `N=1000` run's duration, at 5x the
+particle count, to keep the real per-step cost -- measured on the actual
+evolving trajectory, `~0.27s`/step -- within about half an hour). Also
+caught a stale assertion while validating the final run: the angular
+-momentum-conservation tolerance (`1e-4`) had been copied from the
+`N=1000` pairwise-based run, where exact Newton's-third-law pairs make
+leapfrog conserve `L` to ~machine precision; Barnes-Hut's opening-angle
+approximation does not have that exact symmetry (a distant clump's
+reaction force isn't perfectly balanced against the monopole
+approximation used to compute it), so some drift is expected. Relaxed the
+tolerance to `2%`, based on `Barnes_Hut.ipynb`'s own measured `~1.6%`
+force error at `theta=0.5`, rather than assuming pairwise-level exactness.
+Final run: `1.4%` energy drift, `0.41%` L drift over `4000` steps -- both
+consistent with the solver's known approximation level, not evidence of a
+bug.
+
+## Progress
+
+- [x] Phase 1 — `nbody.py`, `Validation.ipynb`
+- [x] Phase 2 — `Barnes_Hut.ipynb`
+- [x] Phase 3 — `FMM.ipynb`
+- [x] Phase 4 — `Galaxy_Collapse.ipynb`
+- [x] Performance optimization — numba-jitted Barnes-Hut/FMM
+- [x] Galaxy_Collapse rescaled to N=5000 with Barnes-Hut
+
+All phases complete.

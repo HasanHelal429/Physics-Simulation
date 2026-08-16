@@ -1,0 +1,27 @@
+grid: 625x200=125000 cells, dx=0.0400, offset=0.02 (0.50 cells)
+step 500: t=4.9 envelope(max|v| over last 300 steps)=3.8500e-03 max|div|=3.54e-08 max|u|=1.562
+step 1000: t=10.1 envelope(max|v| over last 300 steps)=1.7673e-02 max|div|=3.70e-08 max|u|=1.543
+step 1500: t=15.3 envelope(max|v| over last 300 steps)=2.1265e-02 max|div|=3.70e-08 max|u|=1.540
+step 2000: t=20.5 envelope(max|v| over last 300 steps)=2.0863e-02 max|div|=4.38e-08 max|u|=1.539
+step 2500: t=25.7 envelope(max|v| over last 300 steps)=1.7848e-02 max|div|=2.81e-08 max|u|=1.538
+step 3000: t=30.9 envelope(max|v| over last 300 steps)=1.5261e-02 max|div|=9.61e-09 max|u|=1.537
+step 3500: t=36.1 envelope(max|v| over last 300 steps)=1.2982e-02 max|div|=1.09e-08 max|u|=1.537
+step 4000: t=41.3 envelope(max|v| over last 300 steps)=1.0998e-02 max|div|=1.12e-08 max|u|=1.537
+step 4500: t=46.5 envelope(max|v| over last 300 steps)=9.5143e-03 max|div|=1.13e-08 max|u|=1.537
+step 5000: t=51.7 envelope(max|v| over last 300 steps)=8.5729e-03 max|div|=1.13e-08 max|u|=1.536
+step 5500: t=56.9 envelope(max|v| over last 300 steps)=6.9889e-03 max|div|=1.13e-08 max|u|=1.536
+step 6000: t=62.1 envelope(max|v| over last 300 steps)=6.2302e-03 max|div|=1.13e-08 max|u|=1.536
+step 6500: t=67.3 envelope(max|v| over last 300 steps)=6.7851e-03 max|div|=1.13e-08 max|u|=1.536
+step 7000: t=72.5 envelope(max|v| over last 300 steps)=6.4321e-03 max|div|=1.13e-08 max|u|=1.536
+step 7500: t=77.7 envelope(max|v| over last 300 steps)=6.0808e-03 max|div|=1.13e-08 max|u|=1.536
+step 8000: t=82.9 envelope(max|v| over last 300 steps)=5.7471e-03 max|div|=1.13e-08 max|u|=1.536
+step 8500: t=88.1 envelope(max|v| over last 300 steps)=5.4448e-03 max|div|=1.13e-08 max|u|=1.536
+step 9000: t=93.4 envelope(max|v| over last 300 steps)=5.1791e-03 max|div|=1.13e-08 max|u|=1.536
+step 9500: t=98.6 envelope(max|v| over last 300 steps)=4.9501e-03 max|div|=1.13e-08 max|u|=1.536
+step 10000: t=103.8 envelope(max|v| over last 300 steps)=4.5250e-03 max|div|=1.13e-08 max|u|=1.536
+step 10500: t=109.0 envelope(max|v| over last 300 steps)=4.0917e-03 max|div|=1.13e-08 max|u|=1.536
+step 11000: t=114.2 envelope(max|v| over last 300 steps)=4.3098e-03 max|div|=1.13e-08 max|u|=1.536
+step 11500: t=119.4 envelope(max|v| over last 300 steps)=4.2080e-03 max|div|=1.13e-08 max|u|=1.536
+
+11559 steps in 603.7s (52.23 ms/step)
+DONE
