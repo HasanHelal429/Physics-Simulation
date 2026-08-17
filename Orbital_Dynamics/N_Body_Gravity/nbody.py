@@ -841,14 +841,35 @@ def integrate(pos0, vel0, mass, dt, n_steps, accel_fn, G=1.0, softening=1e-3):
     return pos_t, vel_t
 
 
+@njit(cache=True, parallel=True)
+def _potential_energy_numba(pos, mass, G, softening):
+    """Direct O(N^2) pairwise sum, but looped rather than materializing
+    the full (N,N) diff/distance/mass-outer-product arrays numpy
+    broadcasting would build -- at the particle counts the collapse
+    notebooks now run (N=15000+), those transient arrays are multiple
+    GB each and dominate wall-clock time (originally ~7s/call at
+    N=16000, called 150-300x in a conservation-check loop -- the actual
+    cause of a real KeyboardInterrupt/near-hang found while committing
+    Galaxy_Collision.ipynb). This is per-particle work under `prange`,
+    same pattern as `_bh_walk`."""
+    N = pos.shape[0]
+    soft2 = softening**2
+    PE = 0.0
+    for i in prange(N):
+        pe_i = 0.0
+        for j in range(i + 1, N):
+            dx = pos[j, 0] - pos[i, 0]
+            dy = pos[j, 1] - pos[i, 1]
+            dist = np.sqrt(dx * dx + dy * dy + soft2)
+            pe_i -= mass[i] * mass[j] / dist
+        PE += pe_i
+    return G * PE
+
+
 def energy(pos, vel, mass, G=1.0, softening=1e-3):
     """Total kinetic + softened potential energy (a single snapshot)."""
     KE = 0.5 * np.sum(mass * np.sum(vel**2, axis=-1))
-    diff = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]
-    dist = np.sqrt(np.sum(diff**2, axis=-1) + softening**2)
-    m_outer = mass[:, np.newaxis] * mass[np.newaxis, :]
-    iu = np.triu_indices(len(mass), k=1)
-    PE = -G * np.sum(m_outer[iu] / dist[iu])
+    PE = _potential_energy_numba(pos, mass, G, softening)
     return KE + PE
 
 
