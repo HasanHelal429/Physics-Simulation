@@ -85,6 +85,7 @@ Quantum Mechanics/Molecular_DFT/
     Kinetic_and_Poisson_Validation.ipynb  # Phase 1-2
     Atom_SCF_Validation.ipynb             # Phase 3-4: H, He
     H2_Validation.ipynb                   # Phase 5
+    Molecular_DFT_Visualization.ipynb     # H2 3D density isosurfaces + 2D slice, hydrogen resolution convergence plot
     media/
 ```
 
@@ -122,3 +123,5 @@ Quantum Mechanics/Molecular_DFT/
 5. ✅ Ran Phase 5's H2 SCF (single geometry, then a bond-length scan) and compared against `Diatomic_HF_solver`'s already-validated `-1.135544` Ha result (`9.9%` off) -- found and fixed a missing nuclear-repulsion-term bug along the way. The bond-length scan produces a genuine minimum with real bonding-curve shape, though shifted in `R` from the known equilibrium -- reported honestly as a resolution-driven limitation, not hidden.
 
 **This closes the full 3-phase DFT initiative**: atomic (`HF_solver/`, radial grid) -> diatomic (`Diatomic_HF_solver/`, prolate-spheroidal grid) -> general molecular (`Molecular_DFT/`, 3D Cartesian grid, this project). Natural next steps, explicitly out of scope for this initial build: pseudopotentials (to reach heavier atoms / real polyatomic molecules like H2O), a specialized isolated-boundary Poisson solver (to fix the algebraic box-size convergence characterized in Phase 2), and tighter default resolution (at the real compute cost characterized in Phase 3).
+
+**`Molecular_DFT_Visualization.ipynb`** (post-Phase-5 addition): unlike `Diatomic_HF_solver` (reduced to a single 2D cross-section by exploiting axial symmetry), this solver assumes no symmetry at all, so the natural way to see its output is a genuine 3D isosurface -- built via `skimage.measure.marching_cubes` (a new dependency, added for this) at two isovalues. At `80%` of peak density, H2's isosurface is a single connected cylinder bridging the two nuclei, not two separate atomic lobes -- the real-space signature of a covalent bond, with no bonding assumption anywhere in the solver (no atom-centered basis functions, no symmetry reduction, just a uniform grid and FFT operators). At `3%` it's the full extended density cloud enclosing both nuclei, consistent with `Diatomic_HF_solver`'s own cross-section finding of a bonding-charge bridge, via a completely different method. Also includes a 2D log-scale `(x,z)` slice through the bond axis, and a plot of Phase 3's hydrogen resolution-convergence numbers (`N=32/48/64` -> `-0.476/-0.495/-0.506` Ha, not re-run here given `N=64`'s `~16` minute cost).
