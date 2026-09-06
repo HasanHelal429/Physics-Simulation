@@ -16,7 +16,7 @@ Stage 1; Stage 2 is a GPU port), and the phase-by-phase validation gates.
 | 1 | bare propagator vs `TDSE_Solver/` closed forms | **done** |
 | 2 | self-consistent propagation, ground-state fixed point | **done** |
 | 3 | δ-kick absorption spectrum (He) | **done** |
-| 4 | H2 absorption spectrum | not started |
+| 4 | H2 absorption spectrum (parallel vs perpendicular) | **done** |
 | 5 | strong-field HHG (H, H2) | not started |
 | 6 | visualization | not started |
 
@@ -96,3 +96,11 @@ This grid's known limitations — softened cusp, small box, periodic-FFT
 Poisson error (documented in `Molecular_DFT/fft_ops.solve_poisson`) — set
 the quantitative accuracy; the sum rule and linearity are geometry-exact
 and pass regardless.
+
+**Phase 4 — H2 absorption.** Same pipeline, but H2 (bond along z, `R_e =
+1.4`) kicked *along* and *across* the bond. The per-axis TRK sum rule holds
+to ~99% for both, and the response is genuinely **anisotropic** — `α_∥(0) ≈
+10.7` vs `α_⊥(0) ≈ 8.1` a.u. (more polarizable along the bond). The
+anisotropy *ratio* `α_∥/α_⊥ ≈ 1.31` matches experiment (~1.28) even though
+the magnitudes are ~1.7× high (periodic Poisson error). `response.kick_spectrum`
+is the shared one-call helper.
