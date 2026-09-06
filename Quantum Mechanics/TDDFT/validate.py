@@ -237,6 +237,227 @@ def phase2_fixed_point(quick=False):
 
 
 # --------------------------------------------------------------------------
+# Phase 3
+# --------------------------------------------------------------------------
+
+def phase3_absorption(quick=False):
+    print("\nPhase 3 -- delta-kick linear-response absorption spectrum (He)")
+    import scf3d
+    import potentials3d as pot
+    import perturb
+    import response as rsp
+
+    L, N = 16.0, (28 if quick else 32)
+    grid = _grid(L, N)
+    x, X, Y, Z, dx, G2 = grid
+    coords = (X, Y, Z)
+    soft = 0.5 * dx
+    nuclei = [(2, 0.0, 0.0, 0.0, soft)]
+    Ne = 2
+
+    scf = scf3d.run_scf(nuclei, Ne, grid, method="lda", n_states=3,
+                        max_iter=120, tol_E=1e-7, tol_n=1e-5, return_orbitals=True)
+    occ = scf["occ_orbitals"]
+    V_nuc = pot.nuclear_potential(X, Y, Z, nuclei)
+    psi0, eps = prop.relax_to_self_consistency(scf["orbitals"].astype(complex), occ, V_nuc, grid, method="lda")
+    print(f"    SCF: E={scf['E_total']:.4f} Ha  eps_HOMO={eps[-1]:.4f}  (-> I_p ~ {-eps[-1] * rsp.HA_TO_EV:.1f} eV)")
+
+    dt = 0.05
+    T = 120.0 if quick else 256.0
+    n_steps = int(round(T / dt))
+
+    def run_kick(kk):
+        psi = perturb.dipole_kick(psi0, coords, kk, axis=0)
+        res = prop.propagate(psi, grid, n_steps, dt, occ=occ, V_nuc=V_nuc, method="lda",
+                             record_every=1, observers={"dx": rsp.moment_observer(occ, coords, dx, axis=0)})
+        w, alpha = rsp.polarizability(res["t"], res["obs"]["dx"], kk)
+        return w, alpha
+
+    w, alpha = run_kick(0.01)
+    S = rsp.strength_function(w, alpha)
+    band = w < 4.0
+    w, alpha, S = w[band], alpha[band], S[band]
+
+    n_eff = rsp.sum_rule(w, S, w_max=w[-1])
+    im = np.imag(alpha)
+    im_min_rel = np.min(im[w > 0.1]) / np.max(im[w > 0.1])
+    alpha0 = float(np.real(alpha[0]))                       # static polarizability
+    pk = rsp.peaks(w, S, n=4, w_lo=0.2, w_hi=3.0)
+    lowest = min((p for p in pk if p[1] > 0.15 * pk[0][1]), key=lambda p: p[0], default=pk[0])
+
+    # rigorous internal check: the f-sum rule (exact for the true response;
+    # real-time propagation preserves it up to the finite-time / grid cutoff).
+    check("phase3: TRK sum rule recovers N_e", 0.85 * Ne < n_eff < 1.15 * Ne,
+          f"integral S dw = {n_eff:.3f} = {100 * n_eff / Ne:.0f}% of N_e")
+    # passivity: no negative absorption beyond the between-peak numerical ripple
+    check("phase3: Im alpha >= 0 to the noise floor", im_min_rel > -0.03,
+          f"min(Im alpha) / max(Im alpha) = {im_min_rel:.2e}")
+    # the response is genuinely in the linear regime
+    p1, p2 = _phase3_peak(psi0, grid, occ, V_nuc, coords, dt, 0.005), \
+             _phase3_peak(psi0, grid, occ, V_nuc, coords, dt, 0.02)
+    check("phase3: peak position independent of kick strength", abs(p1 - p2) < 0.05,
+          f"k=.005 -> {p1:.3f} Ha,  k=.02 -> {p2:.3f} Ha")
+    # the lowest line sits in the physical bound/near-threshold region -- its
+    # exact position is red-shifted from the 21.2 eV experiment by the softened
+    # nucleus (same limitation that puts the SCF energy ~0.45 Ha high); a
+    # resolution study (full run only) shows it blue-shifting toward experiment.
+    check("phase3: lowest line in the bound-excitation region",
+          0.30 < lowest[0] < 1.70,
+          f"peak {lowest[0]:.3f} Ha = {lowest[0] * rsp.HA_TO_EV:.1f} eV "
+          f"(expt 1s->2p 21.2 eV; alpha(0) = {alpha0:.2f} a.u., He expt 1.38)")
+
+    conv = None
+    if not quick:
+        conv = _phase3_convergence(coords, dt)
+
+    _plot_phase3(w, S, alpha, n_eff, Ne, lowest, -eps[-1], conv)
+
+
+def _phase3_peak(psi0, grid, occ, V_nuc, coords, dt, kk, T=100.0):
+    import perturb
+    import response as rsp
+    dx = grid[4]
+    psi = perturb.dipole_kick(psi0, coords, kk, axis=0)
+    r = prop.propagate(psi, grid, int(round(T / dt)), dt, occ=occ, V_nuc=V_nuc, method="lda",
+                       record_every=1, observers={"dx": rsp.moment_observer(occ, coords, dx, axis=0)})
+    ww, aa = rsp.polarizability(r["t"], r["obs"]["dx"], kk)
+    ss = rsp.strength_function(ww, aa)
+    m = (ww > 0.2) & (ww < 3.0)
+    return float(ww[m][np.argmax(ss[m])])
+
+
+def _phase3_convergence(coords_unused, dt):
+    """Lowest-peak position vs grid spacing (softening = 0.5 dx tracks dx), to
+    show it blue-shifts toward the 21.2 eV experiment as the grid is refined."""
+    import scf3d
+    import potentials3d as pot
+    import perturb
+    import response as rsp
+    out = []
+    for L, N in [(16.0, 28), (16.0, 34), (16.0, 40)]:
+        g = _grid(L, N)
+        x, X, Y, Z, dxg, G2 = g
+        soft = 0.5 * dxg
+        nuc = [(2, 0.0, 0.0, 0.0, soft)]
+        scf = scf3d.run_scf(nuc, 2, g, method="lda", n_states=2, max_iter=120,
+                            tol_E=1e-7, tol_n=1e-5, return_orbitals=True)
+        Vn = pot.nuclear_potential(X, Y, Z, nuc)
+        p0, _ = prop.relax_to_self_consistency(scf["orbitals"].astype(complex),
+                                               scf["occ_orbitals"], Vn, g, method="lda")
+        pk = _phase3_peak(p0, g, scf["occ_orbitals"], Vn, (X, Y, Z), dt, 0.01, T=140.0)
+        out.append((dxg, pk * rsp.HA_TO_EV, scf["E_total"]))
+        print(f"    conv: dx={dxg:.3f}  E={scf['E_total']:.3f}  lowest peak {pk * rsp.HA_TO_EV:.1f} eV")
+    return out
+
+
+def _plot_phase3(w, S, alpha, n_eff, Ne, lowest, Ip, conv=None):
+    plt = _mpl()
+    ev = w * 27.211386
+    nrow = 3 if conv else 2
+    fig, axes = plt.subplots(nrow, 1, figsize=(7, 3.2 * nrow), dpi=130)
+    a, b = axes[0], axes[1]
+    a.plot(ev, S, "-", color="#4c72b0")
+    a.axvline(lowest[0] * 27.211386, color="#dd8452", ls="--", lw=1,
+              label=f"lowest peak {lowest[0] * 27.211386:.1f} eV")
+    a.axvline(21.22, color="#888", ls=":", lw=1, label="expt 1s->2p 21.2 eV")
+    a.axvline(Ip * 27.211386, color="#c44e52", ls=":", lw=1, label=f"$-\\epsilon_{{HOMO}}$ {Ip*27.211386:.1f} eV")
+    a.set_xlabel(r"$\omega$  (eV)"); a.set_ylabel(r"$S(\omega)$  (per axis)")
+    a.set_title(f"Phase 3 -- He delta-kick absorption   ($\\int S\\,d\\omega$ = {n_eff:.2f}, $N_e$ = {Ne})")
+    a.set_xlim(0, min(ev[-1], 110)); a.legend(frameon=False, fontsize=8)
+    b.plot(ev, np.cumsum(S) * (w[1] - w[0]), color="#55a868")
+    b.axhline(Ne, color="#888", ls=":", lw=1)
+    b.set_xlabel(r"$\omega$  (eV)"); b.set_ylabel(r"running $N_{\rm eff}(\omega)$")
+    b.set_xlim(0, min(ev[-1], 110))
+    if conv:
+        c = axes[2]
+        dxs = [row[0] for row in conv]
+        pks = [row[1] for row in conv]
+        c.plot(dxs, pks, "o-", color="#c44e52")
+        c.axhline(21.22, color="#888", ls=":", lw=1, label="expt 21.2 eV")
+        c.invert_xaxis()
+        c.set_xlabel("grid spacing dx  (Bohr)  -- finer ->")
+        c.set_ylabel("lowest peak  (eV)")
+        c.set_title("resolution convergence (softening = 0.5 dx)")
+        c.legend(frameon=False, fontsize=8)
+    fig.tight_layout(); fig.savefig(os.path.join(MEDIA, "phase3_he_absorption.png")); plt.close(fig)
+
+
+# --------------------------------------------------------------------------
+# Phase 4
+# --------------------------------------------------------------------------
+
+def phase4_h2_absorption(quick=False):
+    print("\nPhase 4 -- H2 delta-kick absorption (parallel vs perpendicular to the bond)")
+    import scf3d
+    import potentials3d as pot
+    import response as rsp
+
+    L, N = 18.0, (30 if quick else 36)
+    grid = _grid(L, N)
+    x, X, Y, Z, dx, G2 = grid
+    Re = 1.4                                     # H2 equilibrium bond length (Bohr)
+    soft = 0.5 * dx
+    nuclei = [(1, 0.0, 0.0, -Re / 2, soft), (1, 0.0, 0.0, +Re / 2, soft)]   # bond along z
+    Ne = 2
+
+    scf = scf3d.run_scf(nuclei, Ne, grid, method="lda", n_states=3, max_iter=150,
+                        tol_E=1e-7, tol_n=1e-5, return_orbitals=True)
+    occ = scf["occ_orbitals"]
+    V_nuc = pot.nuclear_potential(X, Y, Z, nuclei)
+    psi0, eps = prop.relax_to_self_consistency(scf["orbitals"].astype(complex), occ, V_nuc, grid, method="lda")
+    print(f"    SCF: E_total={scf['E_total']:.4f} Ha (incl. nuc-nuc)  eps_HOMO={eps[-1]:.4f}  N={scf['N_check']:.5f}")
+
+    dt = 0.05
+    T = 120.0 if quick else 256.0
+
+    wz, az, Sz = rsp.kick_spectrum(psi0, grid, occ, V_nuc, dt, T, k=0.01, axis=2)   # parallel
+    wx, ax_, Sx = rsp.kick_spectrum(psi0, grid, occ, V_nuc, dt, T, k=0.01, axis=0)  # perpendicular
+    S_iso = (Sz + 2.0 * Sx) / 3.0               # wz == wx (same T, dt)
+
+    n_eff_z = rsp.sum_rule(wz, Sz, w_max=wz[-1])
+    n_eff_x = rsp.sum_rule(wx, Sx, w_max=wx[-1])
+    n_eff_iso = rsp.sum_rule(wz, S_iso, w_max=wz[-1])
+    a0z, a0x = float(np.real(az[0])), float(np.real(ax_[0]))
+
+    def lowest(w, S):
+        pk = rsp.peaks(w, S, n=4, w_lo=0.2, w_hi=3.0)
+        return min((p for p in pk if p[1] > 0.15 * pk[0][1]), key=lambda p: p[0], default=pk[0])
+    lz, lx = lowest(wz, Sz), lowest(wx, Sx)
+
+    check("phase4: TRK sum rule, parallel kick", 0.85 * Ne < n_eff_z < 1.15 * Ne,
+          f"integral S_par dw = {n_eff_z:.3f} = {100 * n_eff_z / Ne:.0f}% of N_e")
+    check("phase4: TRK sum rule, perpendicular kick", 0.85 * Ne < n_eff_x < 1.15 * Ne,
+          f"integral S_perp dw = {n_eff_x:.3f} = {100 * n_eff_x / Ne:.0f}% of N_e")
+    check("phase4: response is anisotropic (parallel != perpendicular)",
+          abs(a0z - a0x) / max(a0z, a0x) > 0.05,
+          f"alpha(0): parallel {a0z:.2f} vs perp {a0x:.2f} a.u.  (H2 expt ~6.3 / ~4.9)")
+    check("phase4: lowest line in the physical region",
+          0.15 < min(lz[0], lx[0]) < 1.20,
+          f"parallel {lz[0] * rsp.HA_TO_EV:.1f} eV, perp {lx[0] * rsp.HA_TO_EV:.1f} eV "
+          f"(expt lowest strong absorption ~ 12-13 eV; grid/softening red-shifts)")
+
+    _plot_phase4(wz, Sz, Sx, S_iso, n_eff_iso, Ne, lz, lx, -eps[-1])
+
+
+def _plot_phase4(w, Sz, Sx, S_iso, n_eff, Ne, lz, lx, Ip):
+    plt = _mpl()
+    ev = w * 27.211386
+    fig, (a, b) = plt.subplots(2, 1, figsize=(7, 6.5), dpi=130)
+    a.plot(ev, Sz, color="#c44e52", label=r"$S_\parallel$  (kick $\parallel$ bond)")
+    a.plot(ev, Sx, color="#4c72b0", label=r"$S_\perp$  (kick $\perp$ bond)")
+    a.plot(ev, S_iso, color="#333", lw=1.0, ls="--", label=r"$S_{\rm iso}$")
+    a.axvline(Ip * 27.211386, color="#888", ls=":", lw=1, label=f"$-\\epsilon_{{HOMO}}$ {Ip*27.211386:.1f} eV")
+    a.set_xlabel(r"$\omega$  (eV)"); a.set_ylabel(r"$S(\omega)$  (per axis)")
+    a.set_title(f"Phase 4 -- H$_2$ absorption  ($\\int S_{{\\rm iso}}\\,d\\omega$ = {n_eff:.2f}, $N_e$ = {Ne})")
+    a.set_xlim(0, min(ev[-1], 90)); a.legend(frameon=False, fontsize=8)
+    b.plot(ev, np.cumsum(S_iso) * (w[1] - w[0]), color="#55a868")
+    b.axhline(Ne, color="#888", ls=":", lw=1)
+    b.set_xlabel(r"$\omega$  (eV)"); b.set_ylabel(r"running $N_{\rm eff}(\omega)$")
+    b.set_xlim(0, min(ev[-1], 90))
+    fig.tight_layout(); fig.savefig(os.path.join(MEDIA, "phase4_h2_absorption.png")); plt.close(fig)
+
+
+# --------------------------------------------------------------------------
 # plots
 # --------------------------------------------------------------------------
 
@@ -283,7 +504,7 @@ def _plot_phase2(t, drho, ddip, dE):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--phase", default="all", choices=["1", "2", "all"])
+    ap.add_argument("--phase", default="all", choices=["1", "2", "3", "4", "all"])
     ap.add_argument("--quick", action="store_true", help="smaller grids / shorter runs")
     args = ap.parse_args()
 
@@ -293,6 +514,10 @@ def main():
         phase1_convergence(args.quick)
     if args.phase in ("2", "all"):
         phase2_fixed_point(args.quick)
+    if args.phase in ("3", "all"):
+        phase3_absorption(args.quick)
+    if args.phase in ("4", "all"):
+        phase4_h2_absorption(args.quick)
 
     n_pass = sum(p for _, p, _ in _results)
     print(f"\n{n_pass}/{len(_results)} checks passed")
