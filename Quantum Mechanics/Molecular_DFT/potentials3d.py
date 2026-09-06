@@ -77,14 +77,19 @@ def ks_potential(rho, V_nuc, G2, method="lda", alpha=ALPHA_SCHWARZ):
     converged ground state produces only phase evolution" an exact
     consistency test rather than an approximate one.
 
-    method: "lda" (Slater exchange at ALPHA_LDA + PZ81 correlation) or
-    "xalpha" (Slater exchange at `alpha`).
+    method: "lda" (Slater exchange at ALPHA_LDA + PZ81 correlation),
+    "xalpha" (Slater exchange at `alpha`), or None -- the bare external
+    potential with no Hartree/XC (the self-interaction-free single-particle
+    limit, used by rt-TDDFT's Phase-5 hydrogen HHG run).
 
     Returns (V_eff, parts) with parts = {"V_H", "V_x", "eps_c", "V_c"} for
-    the total-energy bookkeeping; eps_c/V_c are None for method="xalpha".
+    the total-energy bookkeeping; eps_c/V_c are None for method="xalpha" or None.
     """
+    if method is None:
+        z = np.zeros_like(V_nuc)
+        return V_nuc, {"V_H": z, "V_x": z, "eps_c": None, "V_c": None}
     if method not in ("xalpha", "lda"):
-        raise ValueError(f"method must be 'xalpha' or 'lda', got {method!r}")
+        raise ValueError(f"method must be 'xalpha', 'lda' or None, got {method!r}")
     V_H = fft_ops.solve_poisson(rho, G2)
     if method == "lda":
         V_x = slater_exchange_potential(rho, ALPHA_LDA)

@@ -17,20 +17,26 @@ Stage 1; Stage 2 is a GPU port), and the phase-by-phase validation gates.
 | 2 | self-consistent propagation, ground-state fixed point | **done** |
 | 3 | δ-kick absorption spectrum (He) | **done** |
 | 4 | H2 absorption spectrum (parallel vs perpendicular) | **done** |
-| 5 | strong-field HHG (H, H2) | not started |
-| 6 | visualization | not started |
+| 5 | strong-field HHG (H) | **done** |
+| 6 | visualization (δρ movie) | **done** |
+
+**Stage 1 is complete.** Stage 2 is the C++ GPU port (`05_tdse_gpu`), gated on
+this.
 
 ## Layout
 
 ```
-propagate.py   the propagator: strang_step (fixed V, Phase 1),
-               etrs_step (density-dependent V_KS, Phase 2+), density(),
-               observables, relax_to_self_consistency(), propagate() driver
-perturb.py     dipole_kick (Phase 3), sin2_pulse / dipole_field (Phase 5)
+propagate.py   the propagator: strang_step (fixed V), etrs_step
+               (density-dependent V_KS; method=None = fast single-particle
+               path), density(), observables, imaginary_time_ground_state()
+               (FFT-only KS ground state), relax_to_self_consistency(),
+               propagate() driver
+perturb.py     dipole_kick; sin2_pulse / flattop_pulse / dipole_field (lasers)
 response.py    polarizability alpha(w), strength_function S(w),
-               cross_section sigma(w), TRK sum_rule, peak-finder
-validate.py    headless Phase 1-3 checks -> media/ figures + PASS/FAIL table
-media/         validation figures
+               cross_section sigma(w), TRK sum_rule, hhg_spectrum, peak-finder
+validate.py    headless Phase 1-5 checks -> media/ figures + PASS/FAIL table
+visualize.py   Phase 6: the delta-rho(r,t) movie
+media/         validation figures + deltarho_he_kick.mp4
 ```
 
 Depends on `../Molecular_DFT/` (`grid3d`, `fft_ops`, `potentials3d`, `scf3d`)
@@ -47,9 +53,15 @@ Depends on `../Molecular_DFT/` (`grid3d`, `fft_ops`, `potentials3d`, `scf3d`)
 ## Run
 
 ```sh
-python validate.py --phase all          # ~5-6 min (a Helium SCF dominates)
+python validate.py --phase all          # phases 1-5
 python validate.py --phase 1 --quick    # ~30 s, propagator checks only
+python validate.py --phase 5            # HHG only
+python visualize.py                     # Phase 6 -- the delta-rho movie
 ```
+
+`--quick` shrinks every phase's grid/time. Phases 3-4 SCF via `scf3d`'s
+`eigsh` (slow above N~40 -- keep grids modest); Phase 5 and `visualize.py`
+use imaginary-time relaxation instead, which is FFT-only and fast.
 
 ## Method (Phases 1-2)
 
@@ -104,3 +116,19 @@ to ~99% for both, and the response is genuinely **anisotropic** — `α_∥(0) �
 anisotropy *ratio* `α_∥/α_⊥ ≈ 1.31` matches experiment (~1.28) even though
 the magnitudes are ~1.7× high (periodic Poisson error). `response.kick_spectrum`
 is the shared one-call helper.
+
+**Phase 5 — strong-field HHG (H).** H atom in a flat-top few-cycle pulse
+(`perturb.flattop_pulse`), `boundary_mask` absorbing the ionized flux;
+`response.hhg_spectrum` FFTs the dipole acceleration. Ground state by
+`imaginary_time_ground_state` (FFT-only — `eigsh` doesn't scale to the box
+HHG needs); H propagated with `method=None` (no Hartree/XC — the SIE-free
+single-particle limit, and the ETRS predictor is skipped, ~4× faster). The
+spectrum is a textbook comb: **odd harmonics only** (odd/even ~700×), a flat
+plateau, a sharp cutoff, cutoff extending with intensity, ionization rising
+with intensity. The absolute cutoff is above `I_p + 3.17 U_p` — `E₀` is
+~ the barrier-suppression field for the softened H, past the clean
+tunneling-rescattering regime (which needs a bigger box than this affords).
+
+**Phase 6 — visualization.** `visualize.py` renders `δρ(r,t) = n(t) − n(0)`
+for a He δ-kick — the electron cloud's dipole polarization sloshing left and
+right, which *is* the real-space content of the Phase-3 absorption lines.

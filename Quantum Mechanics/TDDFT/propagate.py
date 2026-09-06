@@ -66,6 +66,73 @@ def density(psi, occ):
     return np.einsum("j,j...->...", occ, np.abs(psi) ** 2)
 
 
+def _orthonormalize(psi, dx):
+    """Modified Gram-Schmidt on an orbital stack (n_orb, Nx, Ny, Nz) w.r.t. the
+    dx^3 real-space inner product."""
+    out = np.array(psi, dtype=complex)
+    for i in range(len(out)):
+        for j in range(i):
+            ov = np.sum(np.conj(out[j]) * out[i]) * dx ** 3
+            out[i] -= ov * out[j]
+        out[i] /= np.sqrt(np.real(np.sum(np.abs(out[i]) ** 2) * dx ** 3))
+    return out
+
+
+def imaginary_time_ground_state(grid, V_nuc, N_electrons, method="lda",
+                                alpha=pot.ALPHA_SCHWARZ, dtau=None, max_iter=600,
+                                inner=4, tol=1e-8, seed=0, verbose=False):
+    """Kohn-Sham ground state by imaginary-time propagation -- the FFT-only
+    alternative to scf3d's eigsh (which becomes the bottleneck on the larger
+    boxes rt-TDDFT strong-field runs need; also what the planned C++ Stage 2
+    uses via 05_tdse_gpu's --relax).
+
+    Each outer step: build V_KS[rho], apply a few symmetric imaginary-time
+    split-steps exp(-V dtau/2) exp(-T dtau) exp(-V dtau/2) to every orbital
+    (damps out the high-energy components), Gram-Schmidt orthonormalize,
+    rebuild rho. Converges when the KS eigenvalue sum and the density stop
+    moving.
+
+    Returns (psi, occ, eps) -- normalized complex orbitals (n_orb, *grid),
+    occupations (2 per orbital, last one 1 if N_electrons is odd), and the
+    per-orbital energies from the converged V_KS.
+    """
+    x, X, Y, Z, dx, G2 = grid
+    shape = X.shape
+    n_orb = (N_electrons + 1) // 2
+    occ = np.full(n_orb, 2.0)
+    if N_electrons % 2:
+        occ[-1] = 1.0
+    if dtau is None:
+        dtau = 0.2 * dx ** 2
+
+    rng = np.random.default_rng(seed)
+    r2 = X ** 2 + Y ** 2 + Z ** 2
+    psi = np.array([np.exp(-r2 / (2.0 + 3.0 * k)) * (1.0 + 0.05 * rng.standard_normal(shape))
+                    for k in range(n_orb)], dtype=complex)
+    psi = _orthonormalize(psi, dx)
+
+    kin = np.exp(-0.5 * G2 * dtau)
+    E_prev = None
+    for it in range(1, max_iter + 1):
+        rho = density(psi, occ)
+        V_eff, _ = pot.ks_potential(rho, V_nuc, G2, method=method, alpha=alpha)
+        half = np.exp(-0.5 * V_eff * dtau)
+        for _ in range(inner):
+            psi = half * psi
+            psi = np.fft.ifftn(kin * np.fft.fftn(psi, axes=_SPATIAL), axes=_SPATIAL)
+            psi = half * psi
+            psi = _orthonormalize(psi, dx)
+        eps = np.array([orbital_energy(psi[j], V_eff, G2, dx) for j in range(n_orb)])
+        E = float(np.sum(occ * eps))
+        dn = np.sum(np.abs(density(psi, occ) - rho)) * dx ** 3
+        if verbose and it % 20 == 0:
+            print(f"      imag-time it {it:4d}: sum eps = {E:.6f}  dn = {dn:.2e}")
+        if E_prev is not None and abs(E - E_prev) < tol and dn < 1e-6:
+            break
+        E_prev = E
+    return psi, occ, eps
+
+
 def relax_to_self_consistency(psi, occ, V_nuc, grid, method="lda",
                               alpha=pot.ALPHA_SCHWARZ, n_iter=40, tol=1e-9):
     """Pure fixed-point refinement (no density mixing) of a near-converged KS
@@ -101,10 +168,11 @@ def relax_to_self_consistency(psi, occ, V_nuc, grid, method="lda",
 
 
 def _v_ks(rho, V_nuc, G2, method, alpha, v_ext):
-    V_eff, _ = pot.ks_potential(rho, V_nuc, G2, method=method, alpha=alpha)
-    if v_ext is not None:
-        V_eff = V_eff + v_ext
-    return V_eff
+    if method is None:
+        V_eff = V_nuc
+    else:
+        V_eff, _ = pot.ks_potential(rho, V_nuc, G2, method=method, alpha=alpha)
+    return V_eff if v_ext is None else V_eff + v_ext
 
 
 def etrs_step(psi, occ, V_nuc, G2, dt, method="lda", alpha=pot.ALPHA_SCHWARZ,
@@ -118,13 +186,21 @@ def etrs_step(psi, occ, V_nuc, G2, dt, method="lda", alpha=pot.ALPHA_SCHWARZ,
 
     then multiply by `mask` (absorbing boundary) if given. `v_ext_next`
     defaults to `v_ext_now` (static external potential).
+
+    method=None skips the density feedback entirely (V is just V_nuc + the
+    time-dependent field), so the predictor is unnecessary -- this is the
+    fast single-particle path for the hydrogen HHG run.
     """
     if v_ext_next is None:
         v_ext_next = v_ext_now
 
-    V0 = _v_ks(density(psi, occ), V_nuc, G2, method, alpha, v_ext_now)
-    psi_pred = strang_step(psi, V0, G2, dt)
-    V1 = _v_ks(density(psi_pred, occ), V_nuc, G2, method, alpha, v_ext_next)
+    if method is None:
+        V0 = V_nuc if v_ext_now is None else V_nuc + v_ext_now
+        V1 = V_nuc if v_ext_next is None else V_nuc + v_ext_next
+    else:
+        V0 = _v_ks(density(psi, occ), V_nuc, G2, method, alpha, v_ext_now)
+        psi_pred = strang_step(psi, V0, G2, dt)
+        V1 = _v_ks(density(psi_pred, occ), V_nuc, G2, method, alpha, v_ext_next)
 
     psi = potential_step(psi, V0, 0.5 * dt)
     psi = kinetic_step(psi, G2, dt)

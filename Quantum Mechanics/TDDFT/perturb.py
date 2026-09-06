@@ -36,6 +36,36 @@ def sin2_pulse(E0, omega, n_cycles, t0=0.0):
     return E
 
 
+def flattop_pulse(E0, omega, n_ramp=2, n_flat=4, t0=0.0):
+    """Trapezoidal-envelope pulse: sin^2 ramp up over `n_ramp` cycles, a flat
+    plateau for `n_flat` cycles, sin^2 ramp down. During the flat portion the
+    field is exactly periodic, so the harmonic spectrum computed from that
+    window has cleanly suppressed even harmonics (unlike a pure sin^2 pulse,
+    whose slowly-varying envelope leaks ~10% into the even orders). Returns a
+    callable E(t) with attributes T_pulse, t_flat_start, t_flat_end."""
+    Tc = 2 * np.pi / omega
+    T_up = n_ramp * Tc
+    T_flat = n_flat * Tc
+    T_pulse = 2 * T_up + T_flat
+
+    def E(t):
+        tau = t - t0
+        if tau < 0 or tau > T_pulse:
+            return 0.0
+        if tau < T_up:
+            env = np.sin(np.pi * tau / (2 * T_up)) ** 2
+        elif tau < T_up + T_flat:
+            env = 1.0
+        else:
+            env = np.sin(np.pi * (T_pulse - tau) / (2 * T_up)) ** 2
+        return E0 * env * np.sin(omega * tau)
+
+    E.T_pulse = T_pulse
+    E.t_flat_start = t0 + T_up
+    E.t_flat_end = t0 + T_up + T_flat
+    return E
+
+
 def dipole_field(E_of_t, coords, axis=0):
     """Wrap a scalar field E(t) into v_ext(t) -> 3D array  E(t) * coord_axis
     (length gauge). Returns a callable suitable for propagate(v_ext_fn=...)."""

@@ -458,6 +458,134 @@ def _plot_phase4(w, Sz, Sx, S_iso, n_eff, Ne, lz, lx, Ip):
 
 
 # --------------------------------------------------------------------------
+# Phase 5
+# --------------------------------------------------------------------------
+
+def phase5_hhg(quick=False):
+    print("\nPhase 5 -- strong-field high-harmonic generation (H atom)")
+    import potentials3d as pot
+    import perturb
+    import response as rsp
+    from masking import boundary_mask
+
+    # H is one electron: the self-interaction-free single-particle limit
+    # (method=None -- bare softened Coulomb, no Hartree/XC) is both *more*
+    # correct here and much faster (no density feedback -> the ETRS predictor
+    # is skipped). Ground state by imaginary-time relaxation (FFT-only).
+    L, N = 32.0, (48 if quick else 56)
+    grid = _grid(L, N)
+    x, X, Y, Z, dx, G2 = grid
+    coords = (X, Y, Z)
+    soft = 0.5 * dx
+    V_nuc = pot.nuclear_potential(X, Y, Z, [(1, 0.0, 0.0, 0.0, soft)])
+
+    psi0, occ, eps = prop.imaginary_time_ground_state(grid, V_nuc, 1, method=None,
+                                                      max_iter=800, tol=1e-9)
+    Ip = float(-eps[-1])
+    print(f"    imag-time GS: eps_1s = {eps[-1]:.4f} Ha  ->  I_p = {Ip * rsp.HA_TO_EV:.1f} eV")
+
+    mask = boundary_mask(grid, width=8.0, order=2)
+    wL = 0.114                            # ~400 nm carrier
+    n_flat = 3 if quick else 4
+    dt = 0.04
+
+    def run(E0):
+        E = perturb.flattop_pulse(E0, wL, n_ramp=2, n_flat=n_flat)
+        vext = perturb.dipole_field(E, coords, axis=2)
+        res = prop.propagate(psi0, grid, int(round((E.T_pulse + 5.0) / dt)), dt,
+                             occ=occ, V_nuc=V_nuc, method=None, v_ext_fn=vext, mask=mask,
+                             record_every=1,
+                             observers={"dz": rsp.moment_observer(occ, coords, dx, axis=2),
+                                        "surv": lambda p, t: float((prop.norm(p, dx) * occ).sum() / occ.sum())})
+        return res, E
+
+    def spectrum_and_cutoff(res, E):
+        """Harmonic spectrum from the flat portion of the pulse; the cutoff is
+        the highest odd order still within 1e-3 of the plateau."""
+        t = np.array(res["t"]); dz = np.array(res["obs"]["dz"])
+        m = (t >= E.t_flat_start) & (t <= E.t_flat_end)
+        w, P = rsp.hhg_spectrum(t[m], dz[m], window="hann")
+        hn = w / wL
+        plat = np.median([rsp.harmonic_peak(w, P, h, wL) for h in (3, 5)])
+        band = (hn > 2.0) & (hn < 25)
+        above = hn[band][P[band] > plat * 1e-3]
+        return w, P, hn, (above.max() if above.size else np.nan)
+
+    E0 = 0.06
+    Up0 = E0 ** 2 / (4 * wL ** 2)
+    res0, E_a = run(E0)
+    w, P, hn, cut0 = spectrum_and_cutoff(res0, E_a)
+    surv0 = np.array(res0["obs"]["surv"])
+    ion0 = 1.0 - surv0[-1]
+
+    E1 = 1.3 * E0
+    Up1 = E1 ** 2 / (4 * wL ** 2)
+    res1, E_b = run(E1)
+    _, _, _, cut1 = spectrum_and_cutoff(res1, E_b)
+    ion1 = 1.0 - np.array(res1["obs"]["surv"])[-1]
+
+    odd = np.mean([rsp.harmonic_peak(w, P, h, wL) for h in (3, 5, 7)])
+    even = np.mean([rsp.harmonic_peak(w, P, h, wL) for h in (2, 4, 6)])
+    odd_even = odd / even
+
+    # plateau: odd orders 3..cut0-2 stay within ~2 decades of the strongest;
+    # then a sharp drop (>= 3 decades) marks the cutoff.
+    p3 = rsp.harmonic_peak(w, P, 3, wL)
+    p_last = rsp.harmonic_peak(w, P, max(3, cut0 - 2), wL)
+    p_beyond = rsp.harmonic_peak(w, P, cut0 + 3, wL)
+    plateau_flat = p_last / p3 > 1e-2
+    has_cutoff = p_beyond / p_last < 1e-3
+
+    cut_pred0 = (Ip + 3.17 * Up0) / wL
+    d_cut_meas = cut1 - cut0
+    d_cut_pred = 3.17 * (Up1 - Up0) / wL
+
+    check("phase5: odd harmonics dominate over even (inversion symmetry)", odd_even > 8,
+          f"odd/even peak ratio = {odd_even:.1f}")
+    check("phase5: a harmonic plateau ends in a sharp cutoff",
+          plateau_flat and has_cutoff,
+          f"plateau flat to order {max(3, cut0 - 2):.0f}, then drops >3 decades by order {cut0 + 3:.0f}")
+    check("phase5: cutoff extends with intensity (>= 3.17 dU_p)",
+          np.isfinite(d_cut_meas) and d_cut_meas >= 0.7 * d_cut_pred,
+          f"cutoff {cut0:.1f} -> {cut1:.1f} harmonics (shift {d_cut_meas:+.1f}); "
+          f"3.17 dU_p = {d_cut_pred:+.1f} (a lower bound: E0 ~ the barrier-suppression "
+          f"field for this softened H, above the clean tunneling-rescattering regime)")
+    check("phase5: ionization rises with intensity", ion1 > 1.5 * ion0 + 1e-5,
+          f"ionized fraction {ion0:.2e} (E0) -> {ion1:.2e} (1.3 E0)")
+
+    print(f"    cutoff at E0: {cut0:.1f} harmonics; I_p + 3.17 U_p = {cut_pred0:.1f} "
+          f"(3.17 U_p law under-predicts in the over-the-barrier regime)")
+    _plot_phase5(np.array(res0["t"]), np.array(res0["obs"]["dz"]), surv0,
+                 [E_a(tt) for tt in res0["t"]], hn, P, cut_pred0, cut0, Ip / wL,
+                 E_a.t_flat_start, E_a.t_flat_end)
+
+
+def _plot_phase5(t, dz, surv, Efield, hn, P, cut_pred, cut_meas, Ip_h, t_flat0, t_flat1):
+    plt = _mpl()
+    fig, (a, b, c) = plt.subplots(3, 1, figsize=(7.5, 8.5), dpi=130)
+    a.plot(t, np.array(Efield) / max(np.abs(Efield)) * np.abs(dz).max(),
+           color="#bbb", lw=0.8, label="E(t) (scaled)")
+    a.plot(t, dz, color="#4c72b0", lw=1.0, label=r"$d_z(t)$")
+    a.axvspan(t_flat0, t_flat1, color="#dd8452", alpha=0.12, label="flat-top (analysed)")
+    a.set_xlabel("t  (a.u.)"); a.set_ylabel(r"$\langle z\rangle$")
+    a.set_title("Phase 5 -- H atom in a flat-top pulse")
+    a.legend(frameon=False, fontsize=8)
+    b.plot(t, 1.0 - surv, color="#dd8452")
+    b.set_xlabel("t  (a.u.)"); b.set_ylabel("ionized fraction  (norm absorbed by mask)")
+    c.semilogy(hn, P / np.max(P), color="#333", lw=0.9)
+    c.axvline(Ip_h, color="#55a868", ls=":", lw=1, label=f"$I_p$ = {Ip_h:.1f} $\\omega_L$")
+    c.axvline(cut_pred, color="#c44e52", ls="--", lw=1, label=f"$I_p + 3.17U_p$ = {cut_pred:.1f}")
+    if np.isfinite(cut_meas):
+        c.axvline(cut_meas, color="#4c72b0", ls="-", lw=1, label=f"measured cutoff {cut_meas:.1f}")
+    for k in range(1, int(hn[-1]) + 1, 2):
+        c.axvline(k, color="#eee", lw=0.5, zorder=0)
+    c.set_xlim(0, min(hn[-1], 25)); c.set_ylim(1e-10, 3)
+    c.set_xlabel(r"harmonic order  $\omega / \omega_L$"); c.set_ylabel(r"$|a(\omega)|^2$  (norm.)")
+    c.set_title("high-harmonic spectrum"); c.legend(frameon=False, fontsize=8)
+    fig.tight_layout(); fig.savefig(os.path.join(MEDIA, "phase5_hhg.png")); plt.close(fig)
+
+
+# --------------------------------------------------------------------------
 # plots
 # --------------------------------------------------------------------------
 
@@ -504,7 +632,7 @@ def _plot_phase2(t, drho, ddip, dE):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--phase", default="all", choices=["1", "2", "3", "4", "all"])
+    ap.add_argument("--phase", default="all", choices=["1", "2", "3", "4", "5", "all"])
     ap.add_argument("--quick", action="store_true", help="smaller grids / shorter runs")
     args = ap.parse_args()
 
@@ -518,6 +646,8 @@ def main():
         phase3_absorption(args.quick)
     if args.phase in ("4", "all"):
         phase4_h2_absorption(args.quick)
+    if args.phase in ("5", "all"):
+        phase5_hhg(args.quick)
 
     n_pass = sum(p for _, p, _ in _results)
     print(f"\n{n_pass}/{len(_results)} checks passed")

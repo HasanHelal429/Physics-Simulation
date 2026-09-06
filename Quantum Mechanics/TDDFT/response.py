@@ -114,6 +114,46 @@ def kick_spectrum(psi0, grid, occ, V_nuc, dt, T, k=0.01, axis=0, method="lda",
     return w[m], alpha[m], S[m]
 
 
+def hhg_spectrum(t, d, window="hann"):
+    """High-harmonic spectrum from a dipole trace d(t) driven by a laser.
+
+    Emits the dipole-acceleration spectrum |a(w)|^2 with a(t) = d''(t)
+    (the acceleration form suppresses the low-frequency drive and is the
+    standard HHG observable). d(t) is differenced twice, windowed, zero-
+    padded, and FFT'd.
+
+    window: "hann" | "none" | a callable t -> array.
+    Returns (omega, power), omega >= 0.
+    """
+    t = np.asarray(t, float)
+    d = np.asarray(d, float)
+    dt = t[1] - t[0]
+    a = np.gradient(np.gradient(d, dt), dt)
+    if window == "hann":
+        w = np.hanning(len(a))
+    elif window in ("none", None):
+        w = np.ones(len(a))
+    elif callable(window):
+        w = np.asarray(window(t), float)
+    else:
+        raise ValueError(f"unknown window {window!r}")
+    aw = a * w
+
+    n = 1
+    while n < 4 * len(aw):
+        n *= 2
+    A = np.fft.rfft(aw, n=n)
+    omega = 2 * np.pi * np.fft.rfftfreq(n, d=dt)
+    return omega, np.abs(A) ** 2
+
+
+def harmonic_peak(omega, power, harmonic_order, omega_L, half_width=3):
+    """Max of `power` in a small window around omega = harmonic_order * omega_L."""
+    i = int(np.argmin(np.abs(omega - harmonic_order * omega_L)))
+    lo, hi = max(0, i - half_width), i + half_width + 1
+    return float(np.max(power[lo:hi]))
+
+
 def peaks(omega, S, n=5, w_lo=0.05, w_hi=None, min_prominence=None):
     """The n most prominent local maxima of S(omega) in (w_lo, w_hi),
     as a list of (omega, S) sorted by descending S. Pure-numpy, no scipy."""
