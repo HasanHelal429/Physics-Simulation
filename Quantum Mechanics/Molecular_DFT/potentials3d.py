@@ -8,6 +8,8 @@ they port over completely unchanged from a 1D radial grid to a 3D one.
 
 import numpy as np
 
+import fft_ops
+
 ALPHA_LDA = 2 / 3
 ALPHA_SCHWARZ = 0.7
 
@@ -63,3 +65,33 @@ def pz81_correlation(rho):
     V_c[low] = eps_c[low] * (1 + (7 / 6) * beta1 * sqrt_rs_l + (4 / 3) * beta2 * rs_l) / denom
 
     return eps_c, V_c
+
+
+def ks_potential(rho, V_nuc, G2, method="lda", alpha=ALPHA_SCHWARZ):
+    """The Kohn-Sham effective potential V_eff = V_nuc + V_H[rho] + V_xc[rho]
+    for a given density rho, on the FFT G-vector grid G2.
+
+    Factored out of scf3d.run_scf's iteration so the SCF loop and the
+    rt-TDDFT propagator (Quantum Mechanics/TDDFT/) build V_eff from the
+    *identical* code -- that identity is what makes "propagating the
+    converged ground state produces only phase evolution" an exact
+    consistency test rather than an approximate one.
+
+    method: "lda" (Slater exchange at ALPHA_LDA + PZ81 correlation) or
+    "xalpha" (Slater exchange at `alpha`).
+
+    Returns (V_eff, parts) with parts = {"V_H", "V_x", "eps_c", "V_c"} for
+    the total-energy bookkeeping; eps_c/V_c are None for method="xalpha".
+    """
+    if method not in ("xalpha", "lda"):
+        raise ValueError(f"method must be 'xalpha' or 'lda', got {method!r}")
+    V_H = fft_ops.solve_poisson(rho, G2)
+    if method == "lda":
+        V_x = slater_exchange_potential(rho, ALPHA_LDA)
+        eps_c, V_c = pz81_correlation(rho)
+        V_xc = V_x + V_c
+    else:
+        V_x = slater_exchange_potential(rho, alpha)
+        V_xc, eps_c, V_c = V_x, None, None
+    V_eff = V_nuc + V_H + V_xc
+    return V_eff, {"V_H": V_H, "V_x": V_x, "eps_c": eps_c, "V_c": V_c}

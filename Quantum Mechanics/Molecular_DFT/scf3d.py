@@ -79,10 +79,16 @@ def run_scf(
     tol_E=1e-5,
     tol_n=1e-3,
     verbose=False,
+    return_orbitals=False,
 ):
     """Run the 3D SCF loop to convergence. grid = (x, X, Y, Z, dx, G2)
     from grid3d.make_grid/g_vectors. method is "xalpha" or "lda", same
     two options as the earlier solvers.
+
+    return_orbitals: also return the converged occupied Kohn-Sham orbitals
+    (normalized, one 3D array per occupied level) as result["orbitals"]
+    (shape (n_occ, *grid)) with occupations result["occ_orbitals"] --
+    rt-TDDFT (Quantum Mechanics/TDDFT/) needs them as its initial state.
     """
     if method not in ("xalpha", "lda"):
         raise ValueError(f"method must be 'xalpha' or 'lda', got {method!r}")
@@ -114,15 +120,8 @@ def run_scf(
     history = []
 
     for it in range(1, max_iter + 1):
-        V_H = fft_ops.solve_poisson(rho, G2)
-        if method == "lda":
-            V_x = pot.slater_exchange_potential(rho, pot.ALPHA_LDA)
-            eps_c, V_c = pot.pz81_correlation(rho)
-            V_xc = V_x + V_c
-        else:
-            V_x = pot.slater_exchange_potential(rho, alpha)
-            V_xc, eps_c, V_c = V_x, None, None
-        V_eff = V_nuc + V_H + V_xc
+        V_eff, parts = pot.ks_potential(rho, V_nuc, G2, method, alpha)
+        V_H, V_x, eps_c, V_c = parts["V_H"], parts["V_x"], parts["eps_c"], parts["V_c"]
 
         energies, vecs = solve_lowest_states(V_eff, G2, shape, n_states)
 
@@ -165,7 +164,7 @@ def run_scf(
     else:
         warnings.warn(f"run_scf: did not converge within {max_iter} iterations (dE={dE:.2e}, dn={dn:.2e})")
 
-    return {
+    result = {
         "method": method,
         "grid": grid,
         "rho": rho,
@@ -177,3 +176,17 @@ def run_scf(
         "history": history,
         "N_check": N_check,
     }
+
+    if return_orbitals:
+        orbs, occ_orbs = [], []
+        for i, occ_i in enumerate(occ):
+            if occ_i == 0:
+                continue
+            psi = vecs[:, i].reshape(shape)
+            psi = psi / np.sqrt(_integrate(psi**2, dx))
+            orbs.append(psi)
+            occ_orbs.append(occ_i)
+        result["orbitals"] = np.array(orbs)
+        result["occ_orbitals"] = np.array(occ_orbs)
+
+    return result
