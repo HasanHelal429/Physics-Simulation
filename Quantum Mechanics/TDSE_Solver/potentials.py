@@ -112,6 +112,49 @@ def soft_coulomb_well(grid, strength, softening, center=None):
     return -strength / np.sqrt(r2 + softening ** 2)
 
 
+def double_well(grid, barrier_height, half_separation, curvature=None, axis=0):
+    """Symmetric quartic double well along `axis`:
+
+        V(x) = barrier_height * ( (x/half_separation)^2 - 1 )^2
+
+    minima at x = +-half_separation (V = 0), a barrier of height
+    `barrier_height` at x = 0. Near a minimum the well is harmonic with
+    omega = sqrt(8 * barrier_height / (mass * half_separation^2)).
+
+    The lowest two eigenstates form a near-degenerate symmetric/
+    antisymmetric pair split by the tunneling gap dE; a state localized in
+    one well (their equal superposition) oscillates to the other well with
+    period 2*pi/dE -- the toy model of the covalent bond and of ammonia
+    inversion. `curvature`, if given, rescales so the small-oscillation
+    omega equals `curvature` instead (overrides `barrier_height`'s role in
+    setting the well stiffness, keeping the barrier position fixed)."""
+    x = grid.coords[axis]
+    a = half_separation
+    if curvature is not None:
+        barrier_height = curvature ** 2 * a ** 2 / 8.0
+    return barrier_height * ((x / a) ** 2 - 1.0) ** 2
+
+
+def gamow_barrier(grid, well_depth, well_radius, coulomb_strength, axis=0,
+                  softening=0.4, edge=0.5):
+    """Spherically-symmetric alpha-decay model potential along the radial
+    coordinate `axis` (assumed >= 0): a nuclear well of depth `well_depth`
+    for r < well_radius, smoothly joined (over a width `edge`) to a softened
+    repulsive Coulomb tail  coulomb_strength / sqrt(r^2 + softening^2).
+
+    The smooth join (rather than a hard step) keeps the eigenstates free of
+    high-k kinks, so the split-operator propagator stays accurate at a
+    reasonable time step. A state with 0 < E < the barrier maximum is
+    quasi-bound: trapped inside but able to tunnel out with a finite width
+    Gamma, lifetime tau = 1/Gamma ~ the WKB / Gamow rate. The lifetime is
+    exponentially sensitive to the barrier -- the origin of the
+    Geiger-Nuttall law."""
+    r = grid.coords[axis]
+    coulomb = coulomb_strength / np.sqrt(r ** 2 + softening ** 2)
+    switch = 0.5 * (1.0 + np.tanh((r - well_radius) / edge))     # 0 inside -> 1 outside
+    return (1.0 - switch) * (-well_depth) + switch * coulomb
+
+
 def double_slit_barrier(grid, V0, x_min, x_max, slit_width, slit_separation, axis=0, slit_axis=1):
     """A wall of height V0 spanning x_min<=x_axis<=x_max along `axis`,
     pierced by two slits of width `slit_width` centered at
