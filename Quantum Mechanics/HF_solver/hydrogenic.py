@@ -61,6 +61,97 @@ def probability_density(psi):
     return np.abs(psi) ** 2
 
 
+def orbital_value_grad_lap(n, l, m, xyz, Z=1):
+    """Value, gradient and Laplacian of a *real* hydrogen-like orbital at
+    arbitrary 3D points ``xyz`` (shape ``(..., 3)``, relative to the
+    nucleus). Returns ``(val, grad, lap)`` with shapes ``(...)``,
+    ``(..., 3)``, ``(...)``.
+
+    Unlike the grid helpers above (which evaluate a prebuilt meshgrid and
+    return values only), this is what a real-space many-body method needs:
+    the Slater matrix wants values, the drift velocity wants
+    ``grad psi / psi``, and the kinetic local energy wants
+    ``lap psi / psi``. Analytic for the s and p orbitals that the small
+    all-electron QMC systems (H, He, Li, Be, H2, LiH) actually use; a
+    high-order finite-difference fallback covers any other ``(n, l, m)``.
+    """
+    xyz = np.asarray(xyz, dtype=float)
+    r = np.sqrt(np.sum(xyz ** 2, axis=-1))
+    r_safe = np.where(r > 1e-12, r, 1e-12)
+    rhat = xyz / r_safe[..., None]
+
+    def from_radial(f, df, d2f):
+        """phi = f(r): grad = f' rhat, lap = f'' + 2 f'/r."""
+        val = f(r)
+        grad = df(r)[..., None] * rhat
+        lap = d2f(r) + 2.0 * df(r) / r_safe
+        return val, grad, lap
+
+    def from_p(g, dg, d2g, axis):
+        """phi = x_axis * g(r): grad_i = delta_{i,axis} g + x_axis g' rhat_i,
+        lap = x_axis (g'' + 4 g'/r)."""
+        xa = xyz[..., axis]
+        val = xa * g(r)
+        grad = xa[..., None] * (dg(r)[..., None] * rhat)
+        e = np.zeros_like(xyz)
+        e[..., axis] = 1.0
+        grad = grad + e * g(r)[..., None]
+        lap = xa * (d2g(r) + 4.0 * dg(r) / r_safe)
+        return val, grad, lap
+
+    a = Z / n  # effective decay scale of the exponential
+    if (n, l) == (1, 0):
+        norm = np.sqrt(Z ** 3 / np.pi)
+        f = lambda rr: norm * np.exp(-a * rr)
+        df = lambda rr: -a * norm * np.exp(-a * rr)
+        d2f = lambda rr: a * a * norm * np.exp(-a * rr)
+        return from_radial(f, df, d2f)
+
+    if (n, l) == (2, 0):
+        norm = np.sqrt(Z ** 3 / (8 * np.pi)) / np.sqrt(2)
+        # R_20 ~ (1 - Z r / 2) exp(-Z r / 2)
+        b = Z / 2.0
+        f = lambda rr: norm * (1.0 - b * rr) * np.exp(-b * rr)
+        df = lambda rr: norm * (-b * np.exp(-b * rr) + (1.0 - b * rr) * (-b) * np.exp(-b * rr))
+        d2f = lambda rr: norm * np.exp(-b * rr) * (b * b * (1.0 - b * rr) + 2.0 * b * b)
+        return from_radial(f, df, d2f)
+
+    if (n, l) == (2, 1):
+        axis = {1: 0, -1: 1, 0: 2}[m]           # 2px, 2py, 2pz
+        norm = np.sqrt(Z ** 5 / (32 * np.pi))
+        b = Z / 2.0
+        g = lambda rr: norm * np.exp(-b * rr)
+        dg = lambda rr: -b * norm * np.exp(-b * rr)
+        d2g = lambda rr: b * b * norm * np.exp(-b * rr)
+        return from_p(g, dg, d2g, axis)
+
+    # ---- finite-difference fallback for anything else ----
+    h = 1e-4
+    base = psi_nlm_real_value(n, l, m, xyz, Z)
+    grad = np.zeros_like(xyz)
+    lap = np.zeros(r.shape)
+    for ax in range(3):
+        step = np.zeros(3)
+        step[ax] = h
+        fp = psi_nlm_real_value(n, l, m, xyz + step, Z)
+        fm = psi_nlm_real_value(n, l, m, xyz - step, Z)
+        grad[..., ax] = (fp - fm) / (2 * h)
+        lap += (fp - 2 * base + fm) / h ** 2
+    return base, grad, lap
+
+
+def psi_nlm_real_value(n, l, m, xyz, Z=1):
+    """Real hydrogen-like orbital value at Cartesian points ``xyz`` (relative
+    to the nucleus). Helper for orbital_value_grad_lap's fallback."""
+    xyz = np.asarray(xyz, float)
+    r = np.sqrt(np.sum(xyz ** 2, axis=-1))
+    r_safe = np.where(r > 1e-12, r, 1e-12)
+    theta = np.arccos(np.clip(xyz[..., 2] / r_safe, -1.0, 1.0))
+    phi = np.arctan2(xyz[..., 1], xyz[..., 0])
+    R = radial_wavefunction(n, l, r, Z)
+    return R * real_spherical_harmonic(l, m, theta, phi)
+
+
 def plot_angular_shape(l, m, ax=None, n_theta=120, n_phi=120, cmap="RdYlBu"):
     """3D surface of a real orbital's angular lobe shape, colored by sign of Y."""
     theta = np.linspace(0, np.pi, n_theta)

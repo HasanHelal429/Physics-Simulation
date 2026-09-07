@@ -170,12 +170,30 @@ Quantum Mechanics/Quantum_Monte_Carlo/
 
 ## Progress
 
-- [ ] Phase 1 — VMC + H, zero-variance test
-- [ ] Phase 2 — VMC He with Jastrow
-- [ ] Phase 3 — DMC + H, He (exact, nodeless)
-- [ ] Phase 4 — DMC Li, Be, H2, LiH (fixed-node)
-- [ ] Phase 5 — cross-solver accuracy ledger
-- [ ] Phase 6 — electron gas vs Ceperley–Alder / PZ81
+**COMPLETE — `validate.py --phase all` passes (~10 min).** Modules:
+`systems.py` (H/He/Li/Be/H2/LiH + electron-gas box; Li/Be/LiH use an analytic
+`(r−r0)e^{−ζr}` 2s made **exactly orthogonal** to the 1s), `wavefunction.py`
+(`SlaterJastrow`, **batched over walkers**, cusp-correct Padé Jastrow),
+`vmc.py` (drift-Metropolis + Umrigar drift cap, Flyvbjerg reblocking,
+correlated-sample variance minimization), `dmc.py` (UNR drift-diffusion-
+branching, fixed-node, stochastic reconfiguration, `dτ→0`), `estimators.py`,
+`electron_gas.py` (plane-wave Slater + Ewald + RPA Jastrow), `README.md`.
+
+Upstream: `HF_solver/hydrogenic.py` gained
+`orbital_value_grad_lap(n,l,m,xyz,Z)` (analytic 1s/2s/2p + FD fallback).
+
+- [x] Phase 1 — VMC + H: min-variance `Z_eff = 1`, `E = −0.5`, **`var(E_L) ≈ 1e-32`** at the exact trial
+- [x] Phase 2 — VMC He: `E ≈ −2.896` (below LDA `−2.834`), variance **cut ~12×** by the Jastrow
+- [x] Phase 3 — DMC: **H → −0.5** from a bad trial; **He → −2.90 ± 0.002** after `dτ→0` (nodeless → exact)
+- [x] Phase 4 — DMC Li/Be/H2/LiH: within the fixed-node error — Li **−1.3 mHa**, Be +6 mHa, H2 +4 mHa, LiH +29 mHa (single-determinant STO trial)
+- [x] Phase 5 — the accuracy ledger (`media/accuracy_ledger.txt`): hydrogenic / HF / LDA / VMC / DMC / exact for H/He/Li/Be/H2 with `E_corr` captured per method; DMC ≤ VMC, below HF, within fixed-node error of exact
+- [x] Phase 6 — HEG (reduced single-Γ VMC): the xc hole in `g(r)` and its `r_s` trend; `ε_c(r_s)` vs Ceperley–Alder — finite-size + trial-function caveat noted
+
+**Note:** the multi-shell atoms needed an analytically-orthogonalized 2s
+(a Z-independent hydrogenic 2s gives a singular Slater matrix); with it the Li
+fixed-node error is ~1 mHa. HF-orbital trials, backflow, multi-determinant,
+released-node and pseudopotentials remain out of scope; a twist-averaged DMC
+HEG is the natural extension.
 
 ## Verification
 
