@@ -169,12 +169,27 @@ Quantum Mechanics/Tensor_Networks/
 
 ## Progress
 
-- [ ] Phase 1 — ED oracle, MPS class, round-trip test
-- [ ] Phase 2 — MPO + DMRG for TFIM vs ED and analytic
-- [ ] Phase 3 — Heisenberg spin-½ / spin-1, Haldane gap, edge modes
-- [ ] Phase 4 — TFIM criticality, central charge `c = ½`
-- [ ] Phase 5 — TEBD quench, light cone, entanglement growth
-- [ ] Phase 6 — Hubbard Mott physics + Hydrogen-chain dissociation
+**COMPLETE — `validate.py --phase all` is 24/24 (~18 min).** Modules:
+`models.py` (local ops, FSM MPOs for TFIM/Heisenberg[+mixed-spin]/Hubbard,
+TEBD gates, analytic refs), `ed.py` (sparse ED oracle; Hubbard via an explicit
+`2^{2N}` Fock build with JW signs), `mps.py` (mixed-canonical MPS, SVD
+truncation + discarded weight, `<O_i>` / correlators / `correlators_from` /
+entanglement / `<H>`), `dmrg.py` (two-site, cached environments, warm-started
+Lanczos, **deflation** for excited states), `tebd.py` (2nd-order Trotter, real
++ imaginary time), `validate.py`, `README.md`.
+
+- [x] Phase 1 — MPS↔ED round-trip → machine precision at exact χ; canonical isometry; entropy matches ED
+- [x] Phase 2 — DMRG = ED to 1e-8 (three g); energy/site → free-fermion `e_0(g=1)`; discarded weight bounds the error
+- [x] Phase 3 — spin-½ → Bethe `¼−ln2`; **Haldane gap → 0.39–0.41 J** via a spin-½-capped chain (singlet–triplet splitting, 1/N); string order ≫ Néel; fractional edge spins; 4-fold manifold (ED)
+- [x] Phase 4 — TFIM critical entropy vs the conformal formula → **`c = 0.51`**; ξ grows with χ
+- [x] Phase 5 — quench front velocity **2.06 vs LR `2 min(g,1)=2`**; linear entanglement growth; energy conserved; imag-time TEBD = DMRG. Light-cone GIF.
+- [x] Phase 6 — **Mott plateau 1.20 vs Lieb–Wu 1.29**; charge correlations die faster than spin (spin–charge separation); **H-chain dissociates flat where restricted HF overshoots**
+
+**Method note (Haldane gap):** an open spin-1 chain has a 4-fold quasi-degenerate
+ground manifold (spin-½ edge modes), so the bulk gap is *not* `E_1−E_0` there.
+Capping each end with a spin-½ binds the edge modes and the bulk gap reappears as
+a clean singlet–triplet splitting. Not in the original plan text; added during
+implementation. iDMRG/iTEBD, PEPS, finite-T (purification/METTS) remain noted-only.
 
 ## Verification
 
