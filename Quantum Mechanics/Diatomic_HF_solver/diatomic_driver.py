@@ -12,6 +12,7 @@ repo's convention of self-contained project folders (see
 Diatomic_HF_Solver_Plan.md's file-layout note).
 """
 
+import os
 import warnings
 
 import numpy as np
@@ -269,3 +270,33 @@ def run_scf(
         "history": history,
         "N_check": N_check,
     }
+
+
+def scan_pes(Z_A, Z_B, R_values, method="lda", csv_path=None, verbose=False, **scf_kw):
+    """Born-Oppenheimer potential energy curve: run the diatomic SCF at each
+    fixed nuclear separation in `R_values` and collect the total energy.
+
+    Returns (R_array, E_array). If `csv_path` is given (or set to True, which
+    picks media/pes_Z<A>_Z<B>_<method>.csv next to this module) the curve is
+    also written as a two-column CSV -- so a PES becomes a clean importable
+    product for Nuclear_Dynamics/ rather than something buried in a notebook.
+    No physics change: this is exactly the bond-scan loop the validation
+    notebooks already run inline.
+    """
+    R_values = np.asarray(R_values, dtype=float)
+    E = np.empty_like(R_values)
+    for i, R in enumerate(R_values):
+        res = run_scf(Z_A, Z_B, float(R), method=method, verbose=False, **scf_kw)
+        E[i] = res["E_total"]
+        if verbose:
+            print(f"  R = {R:6.3f} Bohr   E = {E[i]: .8f} Ha   ({res['iterations']} iters)")
+
+    if csv_path:
+        if csv_path is True:
+            media = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media")
+            os.makedirs(media, exist_ok=True)
+            csv_path = os.path.join(media, f"pes_Z{Z_A}_Z{Z_B}_{method}.csv")
+        header = f"R_bohr,E_total_ha   (Z_A={Z_A}, Z_B={Z_B}, method={method})"
+        np.savetxt(csv_path, np.column_stack([R_values, E]), delimiter=",",
+                   header=header, comments="# ")
+    return R_values, E

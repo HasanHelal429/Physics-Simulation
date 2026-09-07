@@ -162,12 +162,31 @@ Imports `TDSE_Solver/`'s `grid.py`, `propagator.py`, `stationary_states.py`,
 
 ## Progress
 
-- [ ] Phase 1 — reduced-mass grid, Morse closed-form validation
-- [ ] Phase 2 — H2 vibrational levels vs spectroscopic constants
-- [ ] Phase 3 — rotational constants + isotope scaling
-- [ ] Phase 4 — vibrational wavepacket, revivals
-- [ ] Phase 5 — Franck–Condon factors, two-surface dynamics
-- [ ] Phase 6 — photodissociation, KER
+**COMPLETE — `validate.py --phase all` is 19/19 (~100 s, once the PES CSV
+exists).** Modules: `pes.py` (masses, CSV load, spline+Morse, Morse spectrum,
+Dunham extraction), `vibrational.py` (reduced-mass radial grid, levels at fixed
+J, `B_e` / `α_e`, Franck–Condon matrix), `dynamics.py` (1- and 2-surface
+split-operator, revival, photodissociation), `tools/make_pes.py`, `README.md`.
+
+Upstream (all backward-compatible, `mass=1.0` reproduces every earlier result):
+`propagator.py` + `stationary_states.py` gained a `mass` argument;
+`potentials.py` gained `morse_well` and `potential_from_samples(...,fill="morse")`;
+`diatomic_driver.py` + `scf3d.py` gained `scan_pes(...)` (writes `media/pes_*.csv`).
+
+- [x] Phase 1 — grid reproduces the **exact Morse spectrum** (v=0..9 to ~1e-5) + bound-state count
+- [x] Phase 2 — H2 LDA curve → `ω_e ≈ 4175` (expt 4401), `ω_e x_e ≈ 108` (121), `D_0 ≈ 5.4 eV` (4.48) — all off in the expected LDA directions
+- [x] Phase 3 — `B_e ≈ 57 cm⁻¹` (60.85); **D2/HD scale as `μ^{-1/2}` (vib) and `μ^{-1}` (rot) to <1%**
+- [x] Phase 4 — energy conserved to 0.3% of `ω_e` over a full revival; `⟨R⟩(t)` at the mean level spacing; **collapse + partial revival at `2π/(ω_e x_e)`**. GIF.
+- [x] Phase 5 — Franck–Condon **sum rule `Σ FC ≈ 1`**; envelope peaks at the vertical-transition `v'`. GIF.
+- [x] Phase 6 — photodissociation: all norm absorbed; **KER `= E_total − V_∞`** to ~0.1%; Gamow/WKB predissociation lifetime grows sharply with barrier thickness. GIF.
+
+**Notes:** the H2 PES is LDA on a coarse prolate grid — spectroscopic constants
+are a few % off in the expected directions; isotope *ratios* and the Morse
+closed-form check are mass/geometry-exact and match tightly. The
+photodissociation CAP had to be made one-sided (large-R only) so it does not eat
+the bound state. Predissociation uses the WKB/Gamow rate rather than a
+CAP-decay fit (heavy `μ` → very long lifetimes, but the barrier-dependence is
+the exact exponential).
 
 ## Verification
 

@@ -131,6 +131,97 @@ def double_slit_barrier(grid, V0, x_min, x_max, slit_width, slit_separation, axi
     return np.where(in_wall_x & ~in_slit, V0, 0.0)
 
 
+def morse_well(grid, D_e, a, R_e, E_min=0.0, axis=0):
+    """Morse potential V(R) = E_min + D_e (1 - e^{-a(R-R_e)})^2 along `axis`
+    (broadcast over any others). V(R_e) = E_min, V(inf) = E_min + D_e. Its
+    vibrational spectrum has the closed form
+    E_v = omega_e (v+1/2) - omega_e x_e (v+1/2)^2 with
+    omega_e = a sqrt(2 D_e / mu), omega_e x_e = a^2 / (2 mu) -- used to
+    validate the reduced-mass grid Hamiltonian in Nuclear_Dynamics/."""
+    x = grid.axes[axis]
+    v1d = E_min + D_e * (1.0 - np.exp(-a * (x - R_e))) ** 2
+    shape = [1] * grid.ndim
+    shape[axis] = len(x)
+    return np.broadcast_to(v1d.reshape(shape), grid.shape).astype(float).copy()
+
+
+def _fit_morse(R, E):
+    """Least-squares Morse fit to tabulated (R, E); returns (D_e, a, R_e, E_min)."""
+    from scipy.optimize import curve_fit
+
+    R = np.asarray(R, float)
+    E = np.asarray(E, float)
+    i_min = int(np.argmin(E))
+    E_min0 = E[i_min]
+    R_e0 = R[i_min]
+    D_e0 = max(E.max() - E_min0, 1e-3)
+
+    def model(RR, D_e, a, R_e, E_min):
+        return E_min + D_e * (1.0 - np.exp(-a * (RR - R_e))) ** 2
+
+    try:
+        popt, _ = curve_fit(model, R, E, p0=[D_e0, 1.0, R_e0, E_min0], maxfev=20000)
+        D_e, a, R_e, E_min = popt
+        if D_e < 0:
+            D_e, a = abs(D_e), abs(a)
+    except Exception:
+        D_e, a, R_e, E_min = D_e0, 1.0, R_e0, E_min0
+    return float(D_e), float(abs(a)), float(R_e), float(E_min)
+
+
+def potential_from_samples(grid, R_samples, E_samples, fill="morse", axis=0,
+                           return_fit=False):
+    """Turn a tabulated Born-Oppenheimer curve E(R) (as produced by
+    Diatomic_HF_solver / Molecular_DFT PES scans) into a potential array on
+    `grid`.
+
+    Interior of the sampled range: a natural cubic spline through the points.
+    Outside it: `fill="morse"` continues the curve with a Morse fit to the
+    samples (physically correct steep wall as R -> 0 and flat asymptote as
+    R -> inf, and the fit doubles as the Phase-1 closed-form reference);
+    `fill="constant"` clamps to the edge values; `fill="spline"` lets the
+    cubic spline extrapolate (not recommended past a small margin).
+
+    Returns V with shape grid.shape, or (V, morse_params_dict) if return_fit.
+    """
+    from scipy.interpolate import CubicSpline
+
+    R_samples = np.asarray(R_samples, float)
+    E_samples = np.asarray(E_samples, float)
+    order = np.argsort(R_samples)
+    R_samples, E_samples = R_samples[order], E_samples[order]
+    R_lo, R_hi = R_samples[0], R_samples[-1]
+
+    spline = CubicSpline(R_samples, E_samples, extrapolate=(fill == "spline"))
+    D_e, a, R_e, E_min = _fit_morse(R_samples, E_samples)
+
+    def morse(RR):
+        return E_min + D_e * (1.0 - np.exp(-a * (RR - R_e))) ** 2
+
+    x = grid.axes[axis]
+    v = np.empty_like(x, dtype=float)
+    inside = (x >= R_lo) & (x <= R_hi)
+    v[inside] = spline(x[inside])
+    if fill == "morse":
+        v[~inside] = morse(x[~inside])
+        # remove any small offset so the spline and Morse agree at the seams
+        for edge, mask in ((R_lo, x < R_lo), (R_hi, x > R_hi)):
+            if mask.any():
+                v[mask] += spline(edge) - morse(edge)
+    elif fill == "constant":
+        v[x < R_lo] = E_samples[0]
+        v[x > R_hi] = E_samples[-1]
+    else:
+        v[~inside] = spline(x[~inside])
+
+    shape = [1] * grid.ndim
+    shape[axis] = len(x)
+    V = np.broadcast_to(v.reshape(shape), grid.shape).astype(float).copy()
+    if return_fit:
+        return V, {"D_e": D_e, "a": a, "R_e": R_e, "E_min": E_min, "E_inf": E_min + D_e}
+    return V
+
+
 def absorbing_boundary(grid, width, eta, order=3, axes=None):
     """Complex absorbing potential (CAP): a real, non-negative ramp W(r)
     that grows over a layer of thickness `width` at the domain edges,

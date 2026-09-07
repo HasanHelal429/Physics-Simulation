@@ -60,21 +60,26 @@ def laplacian_matrix(grid):
     return total
 
 
-def hamiltonian(grid, V):
-    """H = -1/2 * laplacian + V, as a sparse CSC matrix of shape (n, n)
-    with n = prod(grid.shape). Real and symmetric (both boundary
-    conventions' Laplacians are), so eigsh is the appropriate solver."""
+def hamiltonian(grid, V, mass=1.0):
+    """H = -1/(2*mass) * laplacian + V, as a sparse CSC matrix of shape
+    (n, n) with n = prod(grid.shape). Real and symmetric (both boundary
+    conventions' Laplacians are), so eigsh is the appropriate solver.
+
+    mass=1.0 (default) is the electron TDSE and is bit-identical to the
+    original -1/2 laplacian form. Nuclear_Dynamics/ passes a nuclear
+    reduced mass mu here to get vibrational levels on a Born-Oppenheimer
+    PES."""
     L = laplacian_matrix(grid)
-    return (-0.5 * L + sp.diags(V.ravel())).tocsc()
+    return (-(0.5 / mass) * L + sp.diags(V.ravel())).tocsc()
 
 
-def lowest_states(grid, V, k=6):
-    """Lowest `k` eigenstates of hamiltonian(grid, V). Returns
+def lowest_states(grid, V, k=6, mass=1.0):
+    """Lowest `k` eigenstates of hamiltonian(grid, V, mass). Returns
     (energies, states) with energies sorted ascending and states a list
     of k arrays each shaped like grid.shape (already normalized in the
     plain sum-of-squares sense scipy's eigsh returns; use observables.norm
     if a continuum-normalized wavefunction is needed)."""
-    H = hamiltonian(grid, V)
+    H = hamiltonian(grid, V, mass=mass)
     energies, vectors = spla.eigsh(H, k=k, which='SA')
     order = np.argsort(energies)
     energies = energies[order]

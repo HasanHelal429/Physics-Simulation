@@ -28,13 +28,17 @@ import numpy as np
 from scipy.fft import dstn, idstn
 
 
-def kinetic_eigenvalues(grid):
-    """k^2 = kx^2 + ky^2 + ... at every grid point, shape == grid.shape.
-    This is the eigenvalue of T=-1/2 laplacian (times 2) in whichever
-    spectral basis grid.boundary selects -- pass it into kinetic_step to
-    avoid recomputing it every call when dt is fixed across many steps."""
+def kinetic_eigenvalues(grid, mass=1.0):
+    """k^2/mass = (kx^2 + ky^2 + ...)/mass at every grid point, shape ==
+    grid.shape. This is the eigenvalue of 2T for T = -1/(2*mass) laplacian
+    in whichever spectral basis grid.boundary selects -- pass it into
+    kinetic_step to avoid recomputing it every call when dt is fixed across
+    many steps. mass=1.0 (default) is the ordinary electron-mass TDSE and
+    reproduces every earlier result unchanged; a heavier mass (e.g. a
+    nuclear reduced mass mu ~ 918 for H2, used by Nuclear_Dynamics/) simply
+    scales the kinetic phase down."""
     k_components = np.meshgrid(*grid.k_axes, indexing='ij')
-    return sum(k ** 2 for k in k_components)
+    return sum(k ** 2 for k in k_components) / mass
 
 
 def _forward_transform(psi, grid):
@@ -49,10 +53,12 @@ def _inverse_transform(psi_hat, grid):
     return idstn(psi_hat, type=1)
 
 
-def kinetic_step(psi, grid, dt, k2=None):
-    """Apply e^{-i T dt} exactly (T = -1/2 laplacian), one full step."""
+def kinetic_step(psi, grid, dt, k2=None, mass=1.0):
+    """Apply e^{-i T dt} exactly (T = -1/(2*mass) laplacian), one full step.
+    If a precomputed `k2` is passed it must already carry the same `mass`
+    (it is kinetic_eigenvalues(grid, mass), i.e. the eigenvalue of 2T)."""
     if k2 is None:
-        k2 = kinetic_eigenvalues(grid)
+        k2 = kinetic_eigenvalues(grid, mass)
     psi_hat = _forward_transform(psi, grid)
     psi_hat = psi_hat * np.exp(-1j * k2 * dt / 2)
     return _inverse_transform(psi_hat, grid)
@@ -66,7 +72,7 @@ def potential_step(psi, V, dt):
     return psi * np.exp(-1j * V * dt)
 
 
-def strang_step(psi, grid, V, dt, k2=None):
+def strang_step(psi, grid, V, dt, k2=None, mass=1.0):
     """One full step of the symmetric split-operator method:
 
         e^{-i H dt} ~= e^{-i V dt/2} . e^{-i T dt} . e^{-i V dt/2}
@@ -75,8 +81,12 @@ def strang_step(psi, grid, V, dt, k2=None):
     O(dt^2) globally) since V and T don't commute in general -- exact
     only in the special case V=0, where the middle kinetic_step is itself
     an exact (not approximate) application of the free-particle
-    propagator and the potential half-steps are identity."""
+    propagator and the potential half-steps are identity.
+
+    `mass` is the particle mass in T = -1/(2*mass) laplacian; default 1.0
+    is the electron TDSE. A precomputed `k2` must match that mass (see
+    kinetic_step)."""
     psi = potential_step(psi, V, dt / 2)
-    psi = kinetic_step(psi, grid, dt, k2=k2)
+    psi = kinetic_step(psi, grid, dt, k2=k2, mass=mass)
     psi = potential_step(psi, V, dt / 2)
     return psi

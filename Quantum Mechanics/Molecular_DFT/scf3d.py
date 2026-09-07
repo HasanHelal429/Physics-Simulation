@@ -8,6 +8,7 @@ then held fixed, same stability rationale as before) -> rebuild density ->
 mix -> check convergence.
 """
 
+import os
 import warnings
 
 import numpy as np
@@ -190,3 +191,35 @@ def run_scf(
         result["occ_orbitals"] = np.array(occ_orbs)
 
     return result
+
+
+def scan_pes(Z_A, Z_B, R_values, grid, N_electrons=None, method="lda",
+             softening=0.3, csv_path=None, verbose=False, **scf_kw):
+    """Born-Oppenheimer potential energy curve on the 3D Cartesian grid:
+    place the two nuclei symmetrically about the origin along z, separated by
+    R, run the SCF, collect the total energy for each R in `R_values`.
+
+    Returns (R_array, E_array), and (if `csv_path`) writes a two-column CSV --
+    the analogue of Diatomic_HF_solver.diatomic_driver.scan_pes, making the
+    PES a clean importable product for Nuclear_Dynamics/. `csv_path=True`
+    writes media/pes3d_Z<A>_Z<B>_<method>.csv next to this module.
+    """
+    if N_electrons is None:
+        N_electrons = Z_A + Z_B
+    R_values = np.asarray(R_values, dtype=float)
+    E = np.empty_like(R_values)
+    for i, R in enumerate(R_values):
+        nuclei = [(Z_A, 0.0, 0.0, -R / 2, softening), (Z_B, 0.0, 0.0, +R / 2, softening)]
+        res = run_scf(nuclei, N_electrons, grid, method=method, verbose=False, **scf_kw)
+        E[i] = res["E_total"]
+        if verbose:
+            print(f"  R = {R:6.3f} Bohr   E = {E[i]: .8f} Ha   ({res['iterations']} iters)")
+    if csv_path:
+        if csv_path is True:
+            media = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media")
+            os.makedirs(media, exist_ok=True)
+            csv_path = os.path.join(media, f"pes3d_Z{Z_A}_Z{Z_B}_{method}.csv")
+        np.savetxt(csv_path, np.column_stack([R_values, E]), delimiter=",",
+                   header=f"R_bohr,E_total_ha   (Z_A={Z_A}, Z_B={Z_B}, method={method}, 3D grid)",
+                   comments="# ")
+    return R_values, E
